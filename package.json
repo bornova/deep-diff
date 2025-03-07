@@ -1,0 +1,63 @@
+{
+  "name": "@bornova/deep-diff",
+  "description": "Javascript utility for calculating deep difference, capturing changes, and applying changes across objects; for nodejs and the browser.",
+  "version": "1.0.0",
+  "license": "MIT",
+  "keywords": [
+    "diff",
+    "difference",
+    "compare",
+    "change-tracking"
+  ],
+  "author": "Timur Atalay",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/flitbit/diff.git"
+  },
+  "type": "module",
+  "main": "./lib/cjs",
+  "module": "./lib/esm",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./types/esm/index.d.mts",
+        "default": "./lib/esm/index.mjs"
+      },
+      "require": {
+        "types": "./types/cjs/index.d.cts",
+        "default": "./lib/cjs/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "types"
+  ],
+  "scripts": {
+    "prebuild": "npm run prettier && npm run lint && npm run test:coverage",
+    "build": "rollup -c && npm run types",
+    "format": "npm run prettier:fix && npm run lint:fix",
+    "lint": "eslint .",
+    "lint:fix": "eslint --fix .",
+    "prettier": "prettier --check .",
+    "prettier:fix": "prettier --write .",
+    "test": "mocha --recursive",
+    "test:browser": "mocha --recursive --reporter mochawesome",
+    "test:coverage": "c8 mocha --recursive",
+    "test:watch": "mocha --recursive --watch --parallel --reporter min",
+    "types": "tsc"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.21.0",
+    "@rollup/plugin-terser": "^0.4.4",
+    "c8": "^10.1.3",
+    "chai": "^5.2.0",
+    "eslint": "^9.21.0",
+    "mocha": "^11.1.0",
+    "mochawesome": "^7.1.3",
+    "prettier": "^3.5.3",
+    "rollup": "^4.34.9",
+    "typescript": "^5.8.2"
+  }
+}
