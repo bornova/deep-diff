@@ -97,6 +97,7 @@ function applyChange(target, source, change) {
         if (change.path && typeof it[change.path[i]] === 'undefined') {
           it[change.path[i]] = []
         }
+
         applyArrayChange(change.path ? it[change.path[i]] : it, change.index, change.item)
         break
       case 'D':
@@ -179,6 +180,7 @@ function revertChange(target, source, change) {
       if (typeof it[change.path[i]] === 'undefined') {
         it[change.path[i]] = {}
       }
+
       it = it[change.path[i]]
     }
 

@@ -39,6 +39,7 @@ function hashThisString(string) {
 
   for (let i = 0; i < string.length; i++) {
     const char = string.charCodeAt(i)
+
     hash = (hash << 5) - hash + char
     hash = hash & hash // Convert to 32bit integer
   }
@@ -70,6 +71,7 @@ function getOrderIndependentHash(object) {
     for (const key in object) {
       if (Object.prototype.hasOwnProperty.call(object, key)) {
         const keyValueString = `[ type: object, key: ${key}, value hash: ${getOrderIndependentHash(object[key])} ]`
+
         accum += hashThisString(keyValueString)
       }
     }

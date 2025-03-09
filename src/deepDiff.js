@@ -114,6 +114,7 @@ function deepDiff(lhs, rhs, changes, prefilter, path, key, stack, orderIndepende
 
           if (other >= 0) {
             deepDiff(lhs[k], rhs[k], changes, prefilter, currentPath, k, stack, orderIndependent)
+
             pkeys[other] = null
           } else {
             deepDiff(lhs[k], undefined, changes, prefilter, currentPath, k, stack, orderIndependent)
