@@ -822,31 +822,147 @@ describe('deep-diff', () => {
   })
 
   describe('Diff-ing symbol-based keys should work', () => {
+    it('should work with symbol keys', () => {
+      const lhs = {
+        [Symbol.iterator]: 'Iterator',
+        foo: 'bar'
+      }
+
+      const rhs = {
+        foo: 'baz'
+      }
+
+      const res = DeepDiff.diff(lhs, rhs)
+      //expect(res).to.equal.ok()
+      expect(res).to.be.an('array')
+      expect(res).to.have.length(2)
+
+      let changed = 0,
+        deleted = 0
+      for (const difference of res) {
+        if (difference.kind === 'D') {
+          deleted += 1
+        } else if (difference.kind === 'E') {
+          changed += 1
+        }
+      }
+
+      expect(changed).to.equal(1)
+      expect(deleted).to.equal(1)
+    })
+  })
+
+  describe('Correct diff kind should be reported', () => {
+    it('should report "N" when a new property/element was added', () => {
+      const lhs = {
+        foo: 'bar'
+      }
+
+      const rhs = {
+        foo: 'baz',
+        faz: 'bar'
+      }
+
+      const res = DeepDiff.diff(lhs, rhs)
+
+      expect(res).to.be.an('array')
+      expect(res).to.have.length(2)
+
+      expect(res[1].kind).to.equal('N')
+    })
+
+    it('should report "D" when a property/element was deleted', () => {
+      const lhs = {
+        foo: 'bar'
+      }
+
+      const rhs = {
+        faz: 'bar'
+      }
+
+      const res = DeepDiff.diff(lhs, rhs)
+
+      expect(res).to.be.an('array')
+      expect(res).to.have.length(2)
+
+      expect(res[0].kind).to.equal('D')
+    })
+
+    it('should report "E" when a property/element was edited', () => {
+      const lhs = {
+        foo: 'bar'
+      }
+
+      const rhs = {
+        foo: 'baz'
+      }
+
+      const res = DeepDiff.diff(lhs, rhs)
+
+      expect(res).to.be.an('array')
+      expect(res).to.have.length(1)
+
+      expect(res[0].kind).to.equal('E')
+    })
+
+    it('should report "A" when a a change occurred within an array', () => {
+      const lhs = {
+        foo: 'bar',
+        with: ['a', 'few', 'elements']
+      }
+
+      const rhs = {
+        foo: 'bar',
+        with: ['a', 'few', 'more', 'elements', { than: 'before' }]
+      }
+
+      const res = DeepDiff.diff(lhs, rhs)
+
+      expect(res).to.be.an('array')
+      expect(res).to.have.length(3)
+
+      expect(res[0].kind).to.equal('A')
+    })
+  })
+
+  describe('Changes should be applied correctly', () => {
     const lhs = {
-      [Symbol.iterator]: 'Iterator',
-      foo: 'bar'
-    }
-
-    const rhs = {
-      foo: 'baz'
-    }
-
-    const res = DeepDiff.diff(lhs, rhs)
-    //expect(res).to.equal.ok()
-    expect(res).to.be.an('array')
-    expect(res).to.have.length(2)
-
-    let changed = 0,
-      deleted = 0
-    for (const difference of res) {
-      if (difference.kind === 'D') {
-        deleted += 1
-      } else if (difference.kind === 'E') {
-        changed += 1
+      name: 'my object',
+      description: "it's an object!",
+      details: {
+        it: 'has',
+        an: 'array',
+        with: ['a', 'few', 'elements']
       }
     }
 
-    expect(changed).to.equal(1)
-    expect(deleted).to.equal(1)
+    const rhs = {
+      name: 'updated object',
+      description: "it's an object!",
+      details: {
+        it: 'has',
+        an: 'array',
+        with: ['a', 'few', 'more', 'elements', { than: 'before' }]
+      }
+    }
+
+    DeepDiff.observableDiff(lhs, rhs, (d) => {
+      // Apply all changes except to the name property...
+      if (d.path[d.path.length - 1] !== 'name') {
+        DeepDiff.applyChange(lhs, rhs, d)
+      }
+    })
+
+    it('Should apply all changes except to the name property', () => {
+      expect(lhs).to.eql({
+        name: 'my object',
+        description: "it's an object!",
+        details: {
+          it: 'has',
+          an: 'array',
+          with: ['a', 'few', 'more', 'elements', { than: 'before' }]
+        }
+      })
+    })
   })
 })
