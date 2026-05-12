@@ -1,0 +1,55 @@
+{
+  "name": "@bornova/deep-diff",
+  "description": "Javascript utility for calculating deep difference, capturing changes, and applying changes across objects; for nodejs and the browser.",
+  "version": "1.0.0",
+  "license": "MIT",
+  "keywords": [
+    "diff",
+    "difference",
+    "compare",
+    "change-tracking"
+  ],
+  "author": "Timur Atalay",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bornova/deep-diff.git"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/esm/index.js"
+    }
+  },
+  "jsdelivr": "./dist/browser/deep-diff.min.js",
+  "unpkg": "./dist/browser/deep-diff.min.js",
+  "types": "./dist/types/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "prebuild": "npm test",
+    "build": "rollup -c && npm run types",
+    "format": "npm run prettier:fix && npm run lint:fix",
+    "lint": "eslint .",
+    "lint:fix": "eslint --fix .",
+    "prettier": "prettier --check .",
+    "prettier:fix": "prettier --write .",
+    "pretest": "npm run prettier && npm run lint",
+    "test": "mocha --recursive",
+    "test:coverage": "c8 mocha --recursive",
+    "test:watch": "mocha --recursive --watch --reporter min",
+    "types": "tsc"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@rollup/plugin-terser": "^1.0.0",
+    "c8": "^11.0.0",
+    "chai": "^6.2.2",
+    "eslint": "^10.3.0",
+    "mocha": "^11.7.5",
+    "prettier": "^3.8.3",
+    "rollup": "^4.60.3",
+    "typescript": "^6.0.3"
+  }
+}
