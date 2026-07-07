@@ -134,6 +134,22 @@ function diffValues(lhs, rhs, changes, prefilter, currentPath, key, stack, order
     return
   }
 
+  if (ltrue === 'set') {
+    const larr = Array.from(lhs)
+    const rarr = Array.from(rhs)
+    if (!multisetEqual(larr, rarr)) {
+      changes.push(new DiffEdit(currentPath, lhs, rhs))
+    }
+    return
+  }
+
+  if (ltrue === 'typedarray') {
+    if (!typedArrayEqual(lhs, rhs)) {
+      changes.push(new DiffEdit(currentPath, lhs, rhs))
+    }
+    return
+  }
+
   if (ltype === 'object' && lhs !== null && rhs !== null) {
     // Cycle detection in O(1) via the pair map: paired-on-stack ⇒ equal;
     // either side already on the stack but with a different counterpart ⇒ edit.
@@ -156,6 +172,8 @@ function diffValues(lhs, rhs, changes, prefilter, currentPath, key, stack, order
     try {
       if (Array.isArray(lhs)) {
         diffArrays(lhs, rhs, changes, prefilter, currentPath, stack, orderIndependent)
+      } else if (ltrue === 'map') {
+        diffMaps(lhs, rhs, changes, prefilter, currentPath, stack, orderIndependent)
       } else {
         diffObjects(lhs, rhs, changes, prefilter, currentPath, stack, orderIndependent)
       }
@@ -234,6 +252,39 @@ function diffObjects(lhs, rhs, changes, prefilter, currentPath, stack, orderInde
   for (const k of remaining) {
     deepDiff(undefined, rhs[k], changes, prefilter, currentPath, k, stack, orderIndependent)
   }
+}
+
+/**
+ * Diff two Map instances structurally by keys and values.
+ */
+function diffMaps(lhs, rhs, changes, prefilter, currentPath, stack, orderIndependent) {
+  const lkeys = Array.from(lhs.keys())
+  const rkeys = Array.from(rhs.keys())
+  const remaining = new Set(rkeys)
+
+  for (const k of lkeys) {
+    if (remaining.has(k)) {
+      deepDiff(lhs.get(k), rhs.get(k), changes, prefilter, currentPath, k, stack, orderIndependent)
+      remaining.delete(k)
+    } else {
+      deepDiff(lhs.get(k), undefined, changes, prefilter, currentPath, k, stack, orderIndependent)
+    }
+  }
+
+  for (const k of remaining) {
+    deepDiff(undefined, rhs.get(k), changes, prefilter, currentPath, k, stack, orderIndependent)
+  }
+}
+
+/**
+ * Compare two TypedArray instances element-by-element.
+ */
+function typedArrayEqual(a, b) {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false
+  }
+  return true
 }
 
 /**
