@@ -362,6 +362,43 @@ describe('deep-diff — applyChange, applyDiff and revertChange', () => {
       expect(Object.prototype.polluted).to.equal(undefined)
       expect({}.polluted).to.equal(undefined)
     })
+
+    it('applyChange ignores an array change index targeting constructor', () => {
+      const target = {}
+      const maliciousChange = {
+        kind: 'A',
+        index: 'constructor',
+        item: {
+          kind: 'A',
+          index: 'prototype',
+          item: {
+            kind: 'A',
+            index: 'polluted',
+            item: {
+              kind: 'N',
+              rhs: 'yes'
+            }
+          }
+        }
+      }
+      DeepDiff.applyChange(target, maliciousChange)
+      expect(Object.prototype.polluted).to.equal(undefined)
+      expect({}.polluted).to.equal(undefined)
+    })
+
+    it('applyChange ignores an array change index targeting __proto__', () => {
+      const target = []
+      const maliciousChange = {
+        kind: 'A',
+        index: '__proto__',
+        item: {
+          kind: 'N',
+          rhs: { polluted: 'yes' }
+        }
+      }
+      DeepDiff.applyChange(target, maliciousChange)
+      expect(Object.getPrototypeOf(target)).to.not.have.property('polluted')
+    })
   })
 
   describe('guard / no-op conditions', () => {
@@ -401,6 +438,46 @@ describe('deep-diff — applyChange, applyDiff and revertChange', () => {
       const target = { foo: 'bar' }
       expect(() => DeepDiff.applyDiff(target, null)).to.not.throw()
       expect(target.foo).to.equal('bar')
+    })
+  })
+
+  describe('Map patching support', () => {
+    it('applies Map changes correctly', () => {
+      const target = new Map([['a', 1]])
+      const source = new Map([
+        ['a', 2],
+        ['b', 3]
+      ])
+      DeepDiff.applyDiff(target, source)
+
+      expect(target.get('a')).to.equal(2)
+      expect(target.get('b')).to.equal(3)
+    })
+
+    it('reverts Map changes correctly', () => {
+      const target = new Map([
+        ['a', 2],
+        ['b', 3]
+      ])
+      const source = new Map([['a', 1]])
+      const changes = DeepDiff.diff(source, target)
+
+      expect(changes).to.be.an('array')
+      // Apply reversion on changes
+      for (const change of changes) {
+        DeepDiff.revertChange(target, source, change)
+      }
+
+      expect(target.get('a')).to.equal(1)
+      expect(target.has('b')).to.equal(false)
+    })
+
+    it('applies nested Map changes correctly', () => {
+      const target = { nested: new Map([['x', [1, 2]]]) }
+      const source = { nested: new Map([['x', [1, 2, 3]]]) }
+      DeepDiff.applyDiff(target, source)
+
+      expect(target.nested.get('x')).to.eql([1, 2, 3])
     })
   })
 })
