@@ -44,11 +44,18 @@ function walkPath(start, path) {
 
     if (!isSafeKey(key)) return Object.create(null)
 
-    if (it[key] === undefined || it[key] === null) {
-      it[key] = typeof path[i + 1] === 'number' ? [] : {}
+    const nextVal = it instanceof Map ? it.get(key) : it[key]
+
+    if (nextVal === undefined || nextVal === null) {
+      const container = typeof path[i + 1] === 'number' ? [] : {}
+      if (it instanceof Map) {
+        it.set(key, container)
+      } else {
+        it[key] = container
+      }
     }
 
-    it = it[key]
+    it = it instanceof Map ? it.get(key) : it[key]
   }
 
   return it
@@ -67,8 +74,13 @@ function writeSlot(parent, key, change, policy) {
 
   const op = policy[change.kind]
 
-  if (op === 'delete') delete parent[key]
-  else parent[key] = change[op]
+  if (parent instanceof Map) {
+    if (op === 'delete') parent.delete(key)
+    else parent.set(key, change[op])
+  } else {
+    if (op === 'delete') delete parent[key]
+    else parent[key] = change[op]
+  }
 }
 
 /**
@@ -81,18 +93,33 @@ function writeSlot(parent, key, change, policy) {
  * @returns {Array} - The same array, mutated in place.
  */
 function arrayChange(arr, index, change, policy) {
+  if (!isSafeKey(index)) return arr
+
+  const currentVal = arr instanceof Map ? arr.get(index) : arr[index]
+
   if (change.path?.length) {
-    const it = walkPath(arr[index], change.path)
+    const it = walkPath(currentVal, change.path)
     const key = change.path[change.path.length - 1]
 
-    if (change.kind === KIND.ARRAY) arrayChange(it[key], change.index, change.item, policy)
+    const targetVal = it instanceof Map ? it.get(key) : it[key]
+
+    if (change.kind === KIND.ARRAY) arrayChange(targetVal, change.index, change.item, policy)
     else writeSlot(it, key, change, policy)
   } else if (change.kind === KIND.ARRAY) {
-    arrayChange(arr[index], change.index, change.item, policy)
+    arrayChange(currentVal, change.index, change.item, policy)
   } else if (policy[change.kind] === 'delete') {
-    arr = arrayRemove(arr, index)
+    if (arr instanceof Map) {
+      arr.delete(index)
+    } else {
+      arr = arrayRemove(arr, index)
+    }
   } else {
-    arr[index] = change[policy[change.kind]]
+    const newVal = change[policy[change.kind]]
+    if (arr instanceof Map) {
+      arr.set(index, newVal)
+    } else {
+      arr[index] = newVal
+    }
   }
 
   return arr
@@ -112,11 +139,21 @@ function objectChange(target, change, policy) {
   if (path) {
     const key = path[path.length - 1]
 
-    if (change.kind === KIND.ARRAY) {
-      // Materialize the array slot if it doesn't yet exist.
-      if (typeof it[key] === 'undefined') it[key] = []
+    if (!isSafeKey(key)) return
 
-      arrayChange(it[key], change.index, change.item, policy)
+    if (change.kind === KIND.ARRAY) {
+      const currentVal = it instanceof Map ? it.get(key) : it[key]
+      // Materialize the array slot if it doesn't yet exist.
+      if (typeof currentVal === 'undefined') {
+        if (it instanceof Map) {
+          it.set(key, [])
+        } else {
+          it[key] = []
+        }
+      }
+
+      const nextVal = it instanceof Map ? it.get(key) : it[key]
+      arrayChange(nextVal, change.index, change.item, policy)
     } else {
       writeSlot(it, key, change, policy)
     }
