@@ -1,4 +1,5 @@
 import { expect } from 'chai'
+import vm from 'node:vm'
 
 import * as DeepDiff from '../src/index.js'
 import { getOrderIndependentHash } from '../src/utils.js'
@@ -520,15 +521,11 @@ describe('deep-diff — diff and observableDiff', () => {
     })
   })
 
-  describe.skip('Objects from different frames', () => {
-    it('can compare date instances from a different frame', () => {
-      // eslint-disable-next-line no-undef
-      const frame = document.createElement('iframe')
-      // eslint-disable-next-line no-undef
-      document.body.appendChild(frame)
-
-      const lhs = new frame.contentWindow.Date(2010, 1, 1)
-      const rhs = new frame.contentWindow.Date(2010, 1, 1)
+  describe('Objects from different contexts/frames', () => {
+    it('can compare date instances from a different context', () => {
+      const context = vm.createContext()
+      const lhs = vm.runInNewContext('new Date(2010, 1, 1)', context)
+      const rhs = vm.runInNewContext('new Date(2010, 1, 1)', context)
       const differences = DeepDiff.diff(lhs, rhs)
 
       expect(differences).to.equal(undefined)
@@ -1059,6 +1056,16 @@ describe('deep-diff — order-independent comparison', () => {
     })
   })
 
+  describe('orderIndependent hash with DAGs (shared references)', () => {
+    it('correctly compares objects containing shared references', () => {
+      const shared = { a: 1 }
+      const lhs = { arr: [{ x: shared, y: shared }] }
+      const rhs = { arr: [{ x: { a: 1 }, y: { a: 1 } }] }
+      const diff = DeepDiff.diff(lhs, rhs, { orderIndependent: true })
+      expect(diff).to.equal(undefined)
+    })
+  })
+
   describe('top-level primitive diffs', () => {
     it('returns undefined for two equal primitive values', () => {
       expect(DeepDiff.diff(42, 42)).to.equal(undefined)
@@ -1125,6 +1132,71 @@ describe('deep-diff — order-independent comparison', () => {
       const result = DeepDiff.observableDiff({ a: 1 }, { a: 2 }, undefined, { accumulator: acc })
       expect(result).to.equal(acc)
       expect(acc.length).to.equal(1)
+    })
+  })
+
+  describe('Map, Set, and TypedArray support', () => {
+    it('should detect differences between two Maps', () => {
+      const map1 = new Map([
+        ['a', 1],
+        ['b', 2]
+      ])
+      const map2 = new Map([
+        ['a', 1],
+        ['b', 3],
+        ['c', 4]
+      ])
+      const diff = DeepDiff.diff(map1, map2)
+
+      expect(diff).to.be.an('array')
+      expect(diff.length).to.equal(2)
+
+      // Edit to 'b'
+      const edit = diff.find((d) => d.path && d.path[0] === 'b')
+      expect(edit).to.exist
+      expect(edit.kind).to.equal('E')
+      expect(edit.lhs).to.equal(2)
+      expect(edit.rhs).to.equal(3)
+
+      // Addition of 'c'
+      const addition = diff.find((d) => d.path && d.path[0] === 'c')
+      expect(addition).to.exist
+      expect(addition.kind).to.equal('N')
+      expect(addition.rhs).to.equal(4)
+    })
+
+    it('should detect differences between two Sets', () => {
+      const set1 = new Set([1, 2])
+      const set2 = new Set([1, 3])
+      const diff = DeepDiff.diff(set1, set2)
+
+      expect(diff).to.be.an('array')
+      expect(diff.length).to.equal(1)
+      expect(diff[0].kind).to.equal('E')
+      expect(diff[0].lhs).to.eql(set1)
+      expect(diff[0].rhs).to.eql(set2)
+    })
+
+    it('should detect differences between two TypedArrays', () => {
+      const ta1 = new Uint8Array([1, 2, 3])
+      const ta2 = new Uint8Array([1, 2, 4])
+      const diff = DeepDiff.diff(ta1, ta2)
+
+      expect(diff).to.be.an('array')
+      expect(diff.length).to.equal(1)
+      expect(diff[0].kind).to.equal('E')
+      expect(diff[0].lhs).to.eql(ta1)
+      expect(diff[0].rhs).to.eql(ta2)
+    })
+
+    it('should not be spoofed by Symbol.toStringTag', () => {
+      const dateSpoof = { [Symbol.toStringTag]: 'Date' }
+      const realDate = new Date(2010, 1, 1)
+      const diff = DeepDiff.diff(dateSpoof, realDate)
+
+      expect(diff).to.be.an('array')
+      expect(diff.length).to.equal(1)
+      expect(diff[0].kind).to.equal('E')
     })
   })
 })
