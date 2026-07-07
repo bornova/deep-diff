@@ -1198,5 +1198,45 @@ describe('deep-diff — order-independent comparison', () => {
       expect(diff.length).to.equal(1)
       expect(diff[0].kind).to.equal('E')
     })
+
+    it('should detect deletion of Map keys', () => {
+      const map1 = new Map([
+        ['a', 1],
+        ['b', 2]
+      ])
+      const map2 = new Map([['a', 1]])
+      const diff = DeepDiff.diff(map1, map2)
+
+      expect(diff).to.be.an('array')
+      expect(diff.length).to.equal(1)
+      expect(diff[0].kind).to.equal('D')
+      expect(diff[0].path[0]).to.equal('b')
+    })
+
+    it('should report no changes for equal TypedArrays', () => {
+      const ta1 = new Uint8Array([1, 2, 3])
+      const ta2 = new Uint8Array([1, 2, 3])
+      const diff = DeepDiff.diff(ta1, ta2)
+
+      expect(diff).to.equal(undefined)
+    })
+
+    it('should report differences for TypedArrays of different lengths', () => {
+      const ta1 = new Uint8Array([1])
+      const ta2 = new Uint8Array([1, 2])
+      const diff = DeepDiff.diff(ta1, ta2)
+
+      expect(diff).to.be.an('array')
+      expect(diff.length).to.equal(1)
+      expect(diff[0].kind).to.equal('E')
+    })
+
+    it('should hash Map, Set, and TypedArrays correctly under order-independent comparison', () => {
+      const lhs = [new Map([['a', 1]]), new Set([1, 2]), new Uint8Array([1, 2])]
+      const rhs = [new Set([1, 2]), new Uint8Array([1, 2]), new Map([['a', 1]])]
+      const diff = DeepDiff.diff(lhs, rhs, { orderIndependent: true })
+
+      expect(diff).to.equal(undefined)
+    })
   })
 })
