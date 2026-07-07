@@ -29,6 +29,22 @@ function tagHash(kind, payload) {
 }
 
 /**
+ * Mix two hashes numerically without string allocations.
+ *
+ * @param {number} h1
+ * @param {number} h2
+ * @returns {number}
+ */
+function mix(h1, h2) {
+  let h = 2166136261
+  h ^= h1
+  h = Math.imul(h, 16777619)
+  h ^= h2
+  h = Math.imul(h, 16777619)
+  return h >>> 0
+}
+
+/**
  * Removes a single element from an array at the given index.
  *
  * @param {Array} arr - The array to mutate.
@@ -48,7 +64,7 @@ export function arrayRemove(arr, from) {
  * the test suite.
  *
  * @param {*} subject - The value to inspect.
- * @returns {'undefined'|'boolean'|'number'|'bigint'|'string'|'symbol'|'function'|'null'|'array'|'date'|'regexp'|'math'|'object'} - A lowercase string tag identifying the runtime type.
+ * @returns {'undefined'|'boolean'|'number'|'bigint'|'string'|'symbol'|'function'|'null'|'array'|'date'|'regexp'|'math'|'map'|'set'|'typedarray'|'object'} - A lowercase string tag identifying the runtime type.
  */
 export function realTypeOf(subject) {
   const type = typeof subject
@@ -58,10 +74,43 @@ export function realTypeOf(subject) {
   if (subject === Math) return 'math'
   if (Array.isArray(subject)) return 'array'
 
-  const tag = Object.prototype.toString.call(subject)
+  // Brand check Map & Set
+  if (subject instanceof Map) return 'map'
+  if (subject instanceof Set) return 'set'
 
-  if (tag === '[object Date]') return 'date'
-  if (tag === '[object RegExp]') return 'regexp'
+  // Brand check TypedArrays (e.g. Uint8Array, Float64Array)
+  if (ArrayBuffer.isView(subject) && !(subject instanceof DataView)) {
+    return 'typedarray'
+  }
+
+  // Cross-realm safe brand checks for Date, RegExp, Map, Set
+  try {
+    Date.prototype.getTime.call(subject)
+    return 'date'
+  } catch {
+    // ignore
+  }
+
+  try {
+    RegExp.prototype.test.call(subject, '')
+    return 'regexp'
+  } catch {
+    // ignore
+  }
+
+  try {
+    Map.prototype.has.call(subject, undefined)
+    return 'map'
+  } catch {
+    // ignore
+  }
+
+  try {
+    Set.prototype.has.call(subject, undefined)
+    return 'set'
+  } catch {
+    // ignore
+  }
 
   return 'object'
 }
@@ -85,7 +134,48 @@ export function getOrderIndependentHash(object, seen = new WeakSet()) {
 
     for (const item of object) accum += getOrderIndependentHash(item, seen)
 
+    seen.delete(object)
     return tagHash('array', accum)
+  }
+
+  if (type === 'map') {
+    if (seen.has(object)) return 0
+    seen.add(object)
+
+    let accum = 0
+
+    for (const [key, val] of object.entries()) {
+      const keyHash = getOrderIndependentHash(key, seen)
+      const valHash = getOrderIndependentHash(val, seen)
+      accum += mix(keyHash, valHash)
+    }
+
+    seen.delete(object)
+    return tagHash('map', accum)
+  }
+
+  if (type === 'set') {
+    if (seen.has(object)) return 0
+    seen.add(object)
+
+    let accum = 0
+
+    for (const val of object) {
+      accum += getOrderIndependentHash(val, seen)
+    }
+
+    seen.delete(object)
+    return tagHash('set', accum)
+  }
+
+  if (type === 'typedarray') {
+    let accum = 0
+
+    for (let i = 0; i < object.length; i++) {
+      accum = (Math.imul(accum, 31) + object[i]) | 0
+    }
+
+    return tagHash('typedarray', accum)
   }
 
   if (type === 'object') {
@@ -96,11 +186,12 @@ export function getOrderIndependentHash(object, seen = new WeakSet()) {
     let accum = 0
 
     for (const key of keys) {
-      accum += hashThisString(
-        `[ type: object, key: ${String(key)}, value hash: ${getOrderIndependentHash(object[key], seen)} ]`
-      )
+      const keyHash = hashThisString(String(key))
+      const valHash = getOrderIndependentHash(object[key], seen)
+      accum += mix(keyHash, valHash)
     }
 
+    seen.delete(object)
     return accum
   }
 
