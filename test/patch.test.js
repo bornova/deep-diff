@@ -479,5 +479,36 @@ describe('deep-diff — applyChange, applyDiff and revertChange', () => {
 
       expect(target.nested.get('x')).to.eql([1, 2, 3])
     })
+
+    it('materializes Map intermediate containers in walkPath', () => {
+      const target = new Map()
+      const source = new Map([['a', { b: { c: 1 } }]])
+      const diff = DeepDiff.diff(target, source)
+
+      DeepDiff.applyChange(target, source, diff[0])
+      expect(target.get('a')).to.be.an('object')
+      expect(target.get('a').b.c).to.equal(1)
+    })
+
+    it('materializes Map intermediate containers deep in walkPath', () => {
+      const target = new Map([['a', new Map()]])
+      const source = new Map([['a', new Map([['b', { c: 1 }]])]])
+      const diff = DeepDiff.diff(target, source)
+
+      const emptyTarget = new Map()
+      DeepDiff.applyChange(emptyTarget, source, diff[0])
+      expect(emptyTarget.get('a')).to.be.an('object')
+      expect(emptyTarget.get('a').b.c).to.equal(1)
+    })
+
+    it('materializes Map nested array slots in objectChange', () => {
+      const target = new Map([['a', []]])
+      const source = new Map([['a', [1]]])
+      const diff = DeepDiff.diff(target, source)
+
+      const emptyTarget = new Map()
+      DeepDiff.applyChange(emptyTarget, source, diff[0])
+      expect(emptyTarget.get('a')).to.eql([1])
+    })
   })
 })
