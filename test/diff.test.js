@@ -2,7 +2,53 @@ import { expect } from 'chai'
 import vm from 'node:vm'
 
 import * as DeepDiff from '../src/index.js'
-import { getOrderIndependentHash } from '../src/utils.js'
+import { getOrderIndependentHash, leafEqual } from '../src/utils.js'
+
+describe('deep-diff — models and constants', () => {
+  it('exposes frozen KIND constants', () => {
+    expect(DeepDiff.KIND).to.eql({
+      NEW: 'N',
+      EDIT: 'E',
+      ARRAY: 'A',
+      DELETED: 'D'
+    })
+    expect(Object.isFrozen(DeepDiff.KIND)).to.equal(true)
+  })
+
+  it('emits instances of Diff and the corresponding Diff* subclasses with frozen paths', () => {
+    const changes = DeepDiff.diff({ edited: 1, deleted: 2, arr: [1] }, { edited: 10, added: 3, arr: [1, 2] })
+
+    const edit = changes.find((c) => c.kind === DeepDiff.KIND.EDIT)
+    const deleted = changes.find((c) => c.kind === DeepDiff.KIND.DELETED)
+    const added = changes.find((c) => c.kind === DeepDiff.KIND.NEW)
+    const arrayChange = changes.find((c) => c.kind === DeepDiff.KIND.ARRAY)
+
+    expect(edit).to.be.an.instanceOf(DeepDiff.Diff)
+    expect(edit).to.be.an.instanceOf(DeepDiff.DiffEdit)
+    expect(Object.isFrozen(edit.path)).to.equal(true)
+
+    expect(deleted).to.be.an.instanceOf(DeepDiff.Diff)
+    expect(deleted).to.be.an.instanceOf(DeepDiff.DiffDeleted)
+    expect(Object.isFrozen(deleted.path)).to.equal(true)
+
+    expect(added).to.be.an.instanceOf(DeepDiff.Diff)
+    expect(added).to.be.an.instanceOf(DeepDiff.DiffNew)
+    expect(Object.isFrozen(added.path)).to.equal(true)
+
+    expect(arrayChange).to.be.an.instanceOf(DeepDiff.Diff)
+    expect(arrayChange).to.be.an.instanceOf(DeepDiff.DiffArray)
+    expect(arrayChange.item).to.be.an.instanceOf(DeepDiff.DiffNew)
+    expect(Object.isFrozen(arrayChange.path)).to.equal(true)
+  })
+
+  it('omits path when constructed with undefined or an empty array', () => {
+    const withoutPath = new DeepDiff.DiffEdit(undefined, 1, 2)
+    const withEmptyPath = new DeepDiff.DiffEdit([], 1, 2)
+
+    expect(withoutPath).to.not.have.property('path')
+    expect(withEmptyPath).to.not.have.property('path')
+  })
+})
 
 describe('deep-diff — diff and observableDiff', () => {
   const empty = {}
@@ -22,8 +68,8 @@ describe('deep-diff — diff and observableDiff', () => {
         ['Math', { key: Math }]
       ]
 
-      comparandTuples.forEach(function (lhsTuple) {
-        comparandTuples.forEach(function (rhsTuple) {
+      comparandTuples.forEach((lhsTuple) => {
+        comparandTuples.forEach((rhsTuple) => {
           if (lhsTuple[0] === rhsTuple[0]) {
             return
           }
@@ -31,10 +77,9 @@ describe('deep-diff — diff and observableDiff', () => {
           it('shows differences when comparing ' + lhsTuple[0] + ' to ' + rhsTuple[0], () => {
             const diff = DeepDiff.diff(lhsTuple[1], rhsTuple[1])
 
-            expect(diff).to.be.an('array')
-            expect(diff.length).to.equal(1)
-            expect(diff[0]).to.have.property('kind')
+            expect(diff).to.be.an('array').with.lengthOf(1)
             expect(diff[0].kind).to.equal('E')
+            expect(diff[0].path).to.eql(['key'])
           })
         })
       })
@@ -45,26 +90,18 @@ describe('deep-diff — diff and observableDiff', () => {
         other: 'property',
         another: 13.13
       }
-      const diff = DeepDiff.diff(empty, comparand)
 
       it('the differences are reported', () => {
-        expect(diff).to.be.an('array')
-        expect(diff.length).to.equal(2)
+        const diff = DeepDiff.diff(empty, comparand)
 
-        expect(diff[0]).to.have.property('kind')
+        expect(diff).to.be.an('array').with.lengthOf(2)
+
         expect(diff[0].kind).to.equal('N')
-        expect(diff[0]).to.have.property('path')
-        expect(diff[0].path).to.be.an('array')
-        expect(diff[0].path[0]).to.eql('other')
-        expect(diff[0]).to.have.property('rhs')
+        expect(diff[0].path).to.eql(['other'])
         expect(diff[0].rhs).to.equal('property')
 
-        expect(diff[1]).to.have.property('kind')
         expect(diff[1].kind).to.equal('N')
-        expect(diff[1]).to.have.property('path')
-        expect(diff[1].path).to.be.an('array')
-        expect(diff[1].path[0]).to.eql('another')
-        expect(diff[1]).to.have.property('rhs')
+        expect(diff[1].path).to.eql(['another'])
         expect(diff[1].rhs).to.equal(13.13)
       })
     })
@@ -82,10 +119,10 @@ describe('deep-diff — diff and observableDiff', () => {
     it('shows the property as removed when compared to an empty object', () => {
       const diff = DeepDiff.diff(lhs, empty)
 
-      expect(diff).to.be.an('array')
-      expect(diff.length).to.equal(1)
-      expect(diff[0]).to.have.property('kind')
+      expect(diff).to.be.an('array').with.lengthOf(1)
       expect(diff[0].kind).to.equal('D')
+      expect(diff[0].path).to.eql(['one'])
+      expect(diff[0].lhs).to.equal('property')
     })
 
     it('shows the property as edited when compared to an object with null', () => {
@@ -93,19 +130,19 @@ describe('deep-diff — diff and observableDiff', () => {
         one: null
       })
 
-      expect(diff).to.be.an('array')
-      expect(diff.length).to.equal(1)
-      expect(diff[0]).to.have.property('kind')
+      expect(diff).to.be.an('array').with.lengthOf(1)
       expect(diff[0].kind).to.equal('E')
+      expect(diff[0].path).to.eql(['one'])
+      expect(diff[0].lhs).to.equal('property')
+      expect(diff[0].rhs).to.equal(null)
     })
 
     it('shows the property as edited when compared to an array', () => {
       const diff = DeepDiff.diff(lhs, ['one'])
 
-      expect(diff).to.be.an('array')
-      expect(diff.length).to.equal(1)
-      expect(diff[0]).to.have.property('kind')
+      expect(diff).to.be.an('array').with.lengthOf(1)
       expect(diff[0].kind).to.equal('E')
+      expect(diff[0]).to.not.have.property('path')
     })
   })
 
@@ -121,10 +158,10 @@ describe('deep-diff — diff and observableDiff', () => {
     it('shows the property as removed when compared to an empty object', () => {
       const diff = DeepDiff.diff(lhs, empty)
 
-      expect(diff).to.be.an('array')
-      expect(diff.length).to.equal(1)
-      expect(diff[0]).to.have.property('kind')
+      expect(diff).to.be.an('array').with.lengthOf(1)
       expect(diff[0].kind).to.equal('D')
+      expect(diff[0].path).to.eql(['key'])
+      expect(diff[0].lhs).to.equal(null)
     })
 
     it('shows the property is changed when compared to an object that has value', () => {
@@ -132,25 +169,30 @@ describe('deep-diff — diff and observableDiff', () => {
         key: 'value'
       })
 
-      expect(diff).to.be.an('array')
-      expect(diff.length).to.equal(1)
-      expect(diff[0]).to.have.property('kind')
+      expect(diff).to.be.an('array').with.lengthOf(1)
       expect(diff[0].kind).to.equal('E')
+      expect(diff[0].path).to.eql(['key'])
+      expect(diff[0].lhs).to.equal(null)
+      expect(diff[0].rhs).to.equal('value')
     })
 
     it('shows that an object property is changed when it is set to null', () => {
-      lhs.key = {
-        nested: 'value'
-      }
+      const diff = DeepDiff.diff(
+        {
+          key: {
+            nested: 'value'
+          }
+        },
+        {
+          key: null
+        }
+      )
 
-      const diff = DeepDiff.diff(lhs, {
-        key: null
-      })
-
-      expect(diff).to.be.an('array')
-      expect(diff.length).to.equal(1)
-      expect(diff[0]).to.have.property('kind')
+      expect(diff).to.be.an('array').with.lengthOf(1)
       expect(diff[0].kind).to.equal('E')
+      expect(diff[0].path).to.eql(['key'])
+      expect(diff[0].lhs).to.eql({ nested: 'value' })
+      expect(diff[0].rhs).to.equal(null)
     })
   })
 
@@ -164,10 +206,9 @@ describe('deep-diff — diff and observableDiff', () => {
         key: new Date(777777777777)
       })
 
-      expect(diff).to.be.an('array')
-      expect(diff.length).to.equal(1)
-      expect(diff[0]).to.have.property('kind')
+      expect(diff).to.be.an('array').with.lengthOf(1)
       expect(diff[0].kind).to.equal('E')
+      expect(diff[0].path).to.eql(['key'])
     })
   })
 
@@ -181,10 +222,9 @@ describe('deep-diff — diff and observableDiff', () => {
         key: 0
       })
 
-      expect(diff).to.be.an('array')
-      expect(diff.length).to.equal(1)
-      expect(diff[0]).to.have.property('kind')
+      expect(diff).to.be.an('array').with.lengthOf(1)
       expect(diff[0].kind).to.equal('E')
+      expect(diff[0].path).to.eql(['key'])
     })
 
     it('shows no differences when compared to another NaN', () => {
@@ -193,6 +233,8 @@ describe('deep-diff — diff and observableDiff', () => {
       })
 
       expect(diff).to.equal(undefined)
+      expect(leafEqual(NaN, NaN)).to.equal(true)
+      expect(leafEqual(1, '1')).to.equal(false)
     })
   })
 
@@ -222,29 +264,32 @@ describe('deep-diff — diff and observableDiff', () => {
 
         const diff = DeepDiff.diff(lhs, rhs, { prefilter })
 
-        expect(diff).to.be.an('array')
-        expect(diff.length).to.equal(2)
-        expect(diff[0]).to.have.property('kind')
+        expect(diff).to.be.an('array').with.lengthOf(2)
         expect(diff[0].kind).to.equal('E')
-        expect(diff[1]).to.have.property('kind')
+        expect(diff[0].path).to.eql(['status'])
         expect(diff[1].kind).to.equal('N')
+        expect(diff[1].path).to.eql(['fixedBy'])
       })
     })
 
     describe('if the filtered config is passed as an object', () => {
-      it('changes to the array to not appear as a difference', () => {
+      it('skips properties when prefilter.prefilter returns truthy', () => {
         const prefilter = function (path, key) {
           return key === 'supportedBy'
         }
 
-        const diff = DeepDiff.diff(lhs, rhs, { prefilter })
+        const diff = DeepDiff.diff(lhs, rhs, { prefilter: { prefilter } })
 
-        expect(diff).to.be.an('array')
-        expect(diff.length).to.equal(2)
-        expect(diff[0]).to.have.property('kind')
+        expect(diff).to.be.an('array').with.lengthOf(2)
         expect(diff[0].kind).to.equal('E')
-        expect(diff[1]).to.have.property('kind')
+        expect(diff[0].path).to.eql(['status'])
         expect(diff[1].kind).to.equal('N')
+        expect(diff[1].path).to.eql(['fixedBy'])
+      })
+
+      it('does not skip properties when prefilter.prefilter returns falsy', () => {
+        const result = DeepDiff.diff({ a: 1, b: 2 }, { a: 99, b: 99 }, { prefilter: { prefilter: () => false } })
+        expect(result).to.be.an('array').with.lengthOf(2)
       })
     })
 
@@ -256,21 +301,39 @@ describe('deep-diff — diff and observableDiff', () => {
 
         const diff = DeepDiff.diff(lhs, rhs, { prefilter })
 
-        expect(diff).to.be.an('array')
-        expect(diff.length).to.equal(4)
-        expect(diff[0]).to.have.property('kind')
+        expect(diff).to.be.an('array').with.lengthOf(4)
         expect(diff[0].kind).to.equal('A')
-        expect(diff[1]).to.have.property('kind')
         expect(diff[1].kind).to.equal('A')
-        expect(diff[2]).to.have.property('kind')
         expect(diff[2].kind).to.equal('A')
-        expect(diff[3]).to.have.property('kind')
         expect(diff[3].kind).to.equal('E')
       })
     })
+
+    it('protects currentPath from mutation inside prefilter and normalize callbacks', () => {
+      const changes = DeepDiff.diff(
+        { a: { b: 1 }, c: { d: 2 } },
+        { a: { b: 10 }, c: { d: 20 } },
+        {
+          prefilter: {
+            prefilter(path) {
+              path.push('corrupted')
+              return false
+            },
+            normalize(path) {
+              path.push('corrupted-normalize')
+              return false
+            }
+          }
+        }
+      )
+
+      expect(changes).to.be.an('array').with.lengthOf(2)
+      expect(changes[0].path).to.eql(['a', 'b'])
+      expect(changes[1].path).to.eql(['c', 'd'])
+    })
   })
 
-  describe('Can normalize properties to before diffing', () => {
+  describe('Can normalize properties before diffing', () => {
     const testLHS = {
       array: [1, 2, 3, 4, 5]
     }
@@ -294,55 +357,28 @@ describe('deep-diff — diff and observableDiff', () => {
         }
       }
 
-      let diff
-
-      diff = DeepDiff.diff(testLHS, testRHS, { prefilter: filter })
-      expect(diff).to.equal(undefined)
-
-      diff = DeepDiff.diff(testRHS, testLHS, { prefilter: filter })
-      expect(diff).to.equal(undefined)
+      expect(DeepDiff.diff(testLHS, testRHS, { prefilter: filter })).to.equal(undefined)
+      expect(DeepDiff.diff(testRHS, testLHS, { prefilter: filter })).to.equal(undefined)
     })
 
     it('falsy return does not normalize', () => {
       const filter = {
-        // eslint-disable-next-line no-unused-vars
-        normalize: function (path, key, lhs, rhs) {
+        normalize: function () {
           return false
         }
       }
 
-      let diff
-
-      diff = DeepDiff.diff(testLHS, testRHS, { prefilter: filter })
-      expect(diff).to.be.an('array')
-
-      diff = DeepDiff.diff(testRHS, testLHS, { prefilter: filter })
-      expect(diff).to.be.an('array')
-    })
-  })
-
-  describe('object prefilter with prefilter method', () => {
-    it('skips properties when prefilter.prefilter returns truthy', () => {
-      const lhs = { a: 1, b: 2 }
-      const rhs = { a: 99, b: 99 }
-      const prefilter = {
-        prefilter: (path, key) => key === 'a'
-      }
-      const result = DeepDiff.diff(lhs, rhs, { prefilter })
-      expect(result).to.be.an('array')
-      expect(result.length).to.equal(1)
-      expect(result[0].path[result[0].path.length - 1]).to.equal('b')
+      expect(DeepDiff.diff(testLHS, testRHS, { prefilter: filter })).to.be.an('array')
+      expect(DeepDiff.diff(testRHS, testLHS, { prefilter: filter })).to.be.an('array')
     })
 
-    it('does not skip properties when prefilter.prefilter returns falsy', () => {
-      const lhs = { a: 1, b: 2 }
-      const rhs = { a: 99, b: 99 }
-      const prefilter = {
-        prefilter: () => false
+    it('treats properties normalized to [undefined, undefined] as equal even when missing on one side', () => {
+      const filter = {
+        normalize: (_path, _key, lhs, rhs) => [lhs ?? undefined, rhs ?? undefined]
       }
-      const result = DeepDiff.diff(lhs, rhs, { prefilter })
-      expect(result).to.be.an('array')
-      expect(result.length).to.equal(2)
+
+      expect(DeepDiff.diff({ a: null }, {}, { prefilter: filter })).to.equal(undefined)
+      expect(DeepDiff.diff({}, { a: null }, { prefilter: filter })).to.equal(undefined)
     })
   })
 
@@ -378,89 +414,63 @@ describe('deep-diff — diff and observableDiff', () => {
       expect(DeepDiff.diff(nestedOne, nestedOne)).to.equal(undefined)
     })
 
-    it('shows the property as removed when compared to an empty object', () => {
+    it('shows the properties as removed when compared to an empty object', () => {
       const diff = DeepDiff.diff(nestedOne, empty)
 
-      expect(diff).to.be.an('array')
-      expect(diff.length).to.equal(3)
-      expect(diff[0]).to.have.property('kind')
+      expect(diff).to.be.an('array').with.lengthOf(3)
       expect(diff[0].kind).to.equal('D')
-      expect(diff[1]).to.have.property('kind')
+      expect(diff[0].path).to.eql(['noChange'])
       expect(diff[1].kind).to.equal('D')
+      expect(diff[1].path).to.eql(['levelOne'])
+      expect(diff[2].kind).to.equal('D')
+      expect(diff[2].path).to.eql(['arrayOne'])
     })
 
-    it('shows the property is changed when compared to an object that has value', () => {
+    it('shows the nested properties that changed when compared to another object', () => {
       const diff = DeepDiff.diff(nestedOne, nestedTwo)
 
-      expect(diff).to.be.an('array')
-      expect(diff.length).to.equal(3)
+      expect(diff).to.be.an('array').with.lengthOf(3)
+      expect(diff[0].kind).to.equal('E')
+      expect(diff[0].path).to.eql(['levelOne', 'levelTwo'])
+      expect(diff[0].lhs).to.equal('value')
+      expect(diff[0].rhs).to.equal('another value')
+
+      expect(diff[1].kind).to.equal('A')
+      expect(diff[1].path).to.eql(['arrayOne'])
+      expect(diff[1].index).to.equal(1)
+      expect(diff[1].item.kind).to.equal('N')
+      expect(diff[1].item.rhs).to.eql({ objValue: 'more value' })
+
+      expect(diff[2].kind).to.equal('E')
+      expect(diff[2].path).to.eql(['arrayOne', 0, 'objValue'])
+      expect(diff[2].lhs).to.equal('value')
+      expect(diff[2].rhs).to.equal('new value')
     })
 
-    it('shows the property as added when compared to an empty object on left', () => {
+    it('shows the properties as added when compared to an empty object on left', () => {
       const diff = DeepDiff.diff(empty, nestedOne)
 
-      expect(diff).to.be.an('array')
-      expect(diff.length).to.equal(3)
-      expect(diff[0]).to.have.property('kind')
+      expect(diff).to.be.an('array').with.lengthOf(3)
       expect(diff[0].kind).to.equal('N')
-    })
-
-    describe('when diff is applied to a different empty object', () => {
-      const diff = DeepDiff.diff(nestedOne, nestedTwo)
-
-      it('has result with nested values', () => {
-        const result = {}
-
-        DeepDiff.applyChange(result, nestedTwo, diff[0])
-        expect(result.levelOne).to.be.an('object')
-        expect(result.levelOne.levelTwo).to.be.a('string')
-        expect(result.levelOne.levelTwo).to.eql('another value')
-      })
-
-      it('has result with array object values', () => {
-        const result = {}
-
-        DeepDiff.applyChange(result, nestedTwo, diff[2])
-        expect(result.arrayOne).to.be.an('array')
-        expect(result.arrayOne[0]).to.be.an('object')
-        expect(result.arrayOne[0].objValue).to.be.a('string')
-        expect(result.arrayOne[0].objValue).to.equal('new value')
-      })
-
-      it('has result with added array objects', () => {
-        const result = {}
-
-        DeepDiff.applyChange(result, nestedTwo, diff[1])
-        expect(result.arrayOne).to.be.an('array')
-        expect(result.arrayOne[1]).to.be.an('object')
-        expect(result.arrayOne[1].objValue).to.be.a('string')
-        expect(result.arrayOne[1].objValue).to.equal('more value')
-      })
+      expect(diff[0].path).to.eql(['noChange'])
+      expect(diff[1].kind).to.equal('N')
+      expect(diff[1].path).to.eql(['levelOne'])
+      expect(diff[2].kind).to.equal('N')
+      expect(diff[2].path).to.eql(['arrayOne'])
     })
   })
 
-  describe('regression test for bug #10, ', () => {
+  describe('regression test for bug #10', () => {
     const lhs = {
       id: 'Release',
       phases: [
         {
           id: 'Phase1',
-          tasks: [
-            {
-              id: 'Task1'
-            },
-            {
-              id: 'Task2'
-            }
-          ]
+          tasks: [{ id: 'Task1' }, { id: 'Task2' }]
         },
         {
           id: 'Phase2',
-          tasks: [
-            {
-              id: 'Task3'
-            }
-          ]
+          tasks: [{ id: 'Task3' }]
         }
       ]
     }
@@ -469,55 +479,19 @@ describe('deep-diff — diff and observableDiff', () => {
       id: 'Release',
       phases: [
         {
-          // E: Phase1 -> Phase2
           id: 'Phase2',
-          tasks: [
-            {
-              id: 'Task3'
-            }
-          ]
+          tasks: [{ id: 'Task3' }]
         },
         {
           id: 'Phase1',
-          tasks: [
-            {
-              id: 'Task1'
-            },
-            {
-              id: 'Task2'
-            }
-          ]
+          tasks: [{ id: 'Task1' }, { id: 'Task2' }]
         }
       ]
     }
 
-    describe('differences in nested arrays are detected', () => {
-      it('detects the correct number of differences', () => {
-        const diff = DeepDiff.diff(lhs, rhs)
-        expect(diff).to.be.an('array')
-        expect(diff.length).to.equal(6)
-      })
-
-      it('differences can be applied', () => {
-        const target = JSON.parse(JSON.stringify(lhs))
-        DeepDiff.applyDiff(target, rhs)
-        expect(target).to.eql(rhs)
-      })
-    })
-  })
-
-  describe('regression test for bug #35', () => {
-    const lhs = ['a', 'a', 'a']
-    const rhs = ['a']
-
-    it('can apply diffs between two top level arrays', () => {
-      const differences = DeepDiff.diff(lhs, rhs)
-
-      differences.forEach(function (it) {
-        DeepDiff.applyChange(lhs, true, it)
-      })
-
-      expect(lhs).to.eql(['a'])
+    it('detects the correct number of differences in nested arrays', () => {
+      const diff = DeepDiff.diff(lhs, rhs)
+      expect(diff).to.be.an('array').with.lengthOf(6)
     })
   })
 
@@ -526,9 +500,30 @@ describe('deep-diff — diff and observableDiff', () => {
       const context = vm.createContext()
       const lhs = vm.runInNewContext('new Date(2010, 1, 1)', context)
       const rhs = vm.runInNewContext('new Date(2010, 1, 1)', context)
-      const differences = DeepDiff.diff(lhs, rhs)
 
-      expect(differences).to.equal(undefined)
+      expect(DeepDiff.diff(lhs, rhs)).to.equal(undefined)
+    })
+
+    it('can compare RegExp, Map, Set, TypedArray, Array, and DataView instances across realms', () => {
+      const ctx = vm.createContext()
+      const crossRegex = vm.runInNewContext('/abc/gi', ctx)
+      const crossMap = vm.runInNewContext('new Map([["k", 42]])', ctx)
+      const crossSet = vm.runInNewContext('new Set([1, 2])', ctx)
+      const crossUint8 = vm.runInNewContext('new Uint8Array([1, 2, 3])', ctx)
+      const crossArray = vm.runInNewContext('[1, 2, 3]', ctx)
+      const crossDataView = vm.runInNewContext('new DataView(new ArrayBuffer(4))', ctx)
+
+      expect(DeepDiff.diff(crossRegex, /abc/gi)).to.equal(undefined)
+      expect(DeepDiff.diff(crossMap, new Map([['k', 42]]))).to.equal(undefined)
+      expect(DeepDiff.diff(crossSet, new Set([2, 1]))).to.equal(undefined)
+      expect(DeepDiff.diff(crossUint8, new Uint8Array([1, 2, 3]))).to.equal(undefined)
+      expect(DeepDiff.diff(crossUint8, new Uint8Array([1, 2, 9])))
+        .to.be.an('array')
+        .with.lengthOf(1)
+      expect(DeepDiff.diff(crossArray, [1, 2, 3])).to.equal(undefined)
+      expect(DeepDiff.diff(crossDataView, new Uint8Array(4)))
+        .to.be.an('array')
+        .with.lengthOf(1)
     })
   })
 
@@ -539,10 +534,9 @@ describe('deep-diff — diff and observableDiff', () => {
     it('can compare regex instances', () => {
       const diff = DeepDiff.diff(lhs, rhs)
 
-      expect(diff.length).to.equal(1)
-
+      expect(diff).to.be.an('array').with.lengthOf(1)
       expect(diff[0].kind).to.equal('E')
-      expect(diff[0].path).to.not.be.an('array')
+      expect(diff[0]).to.not.have.property('path')
       expect(diff[0].lhs).to.equal('/foo/')
       expect(diff[0].rhs).to.equal('/foo/i')
     })
@@ -564,7 +558,7 @@ describe('deep-diff — diff and observableDiff', () => {
     it('should not throw a TypeError', () => {
       const diff = DeepDiff.diff(lhs, rhs)
 
-      expect(diff.length).to.equal(1)
+      expect(diff).to.be.an('array').with.lengthOf(1)
     })
   })
 
@@ -586,26 +580,18 @@ describe('deep-diff — diff and observableDiff', () => {
     it('should detect a difference with undefined property on lhs', () => {
       const diff = DeepDiff.diff({ foo: undefined }, {})
 
-      expect(diff).to.be.an('array')
-      expect(diff.length).to.equal(1)
-
+      expect(diff).to.be.an('array').with.lengthOf(1)
       expect(diff[0].kind).to.equal('D')
-      expect(diff[0].path).to.be.an('array')
-      expect(diff[0].path).to.have.length(1)
-      expect(diff[0].path[0]).to.equal('foo')
+      expect(diff[0].path).to.eql(['foo'])
       expect(diff[0].lhs).to.equal(undefined)
     })
 
     it('should detect a difference with undefined property on rhs', () => {
       const diff = DeepDiff.diff({}, { foo: undefined })
 
-      expect(diff).to.be.an('array')
-      expect(diff.length).to.equal(1)
-
+      expect(diff).to.be.an('array').with.lengthOf(1)
       expect(diff[0].kind).to.equal('N')
-      expect(diff[0].path).to.be.an('array')
-      expect(diff[0].path).to.have.length(1)
-      expect(diff[0].path[0]).to.equal('foo')
+      expect(diff[0].path).to.eql(['foo'])
       expect(diff[0].rhs).to.equal(undefined)
     })
   })
@@ -615,29 +601,23 @@ describe('deep-diff — diff and observableDiff', () => {
     const rhs = { foo: undefined }
 
     it('should not detect a difference with two undefined property values', () => {
-      const diff = DeepDiff.diff(lhs, rhs)
-
-      expect(diff).to.equal(undefined)
+      expect(DeepDiff.diff(lhs, rhs)).to.equal(undefined)
     })
   })
 
   describe('regression tests for issue #102', () => {
-    it('should not throw a TypeError', () => {
+    it('should not throw a TypeError when comparing null to undefined', () => {
       const diff = DeepDiff.diff(null, undefined)
 
-      expect(diff).to.be.an('array')
-      expect(diff.length).to.equal(1)
-
+      expect(diff).to.be.an('array').with.lengthOf(1)
       expect(diff[0].kind).to.equal('D')
       expect(diff[0].lhs).to.equal(null)
     })
 
-    it('should not throw a TypeError', () => {
+    it('should not throw a TypeError when lhs is a null-prototype object', () => {
       const diff = DeepDiff.diff(Object.create(null), { foo: undefined })
 
-      expect(diff).to.be.an('array')
-      expect(diff.length).to.equal(1)
-
+      expect(diff).to.be.an('array').with.lengthOf(1)
       expect(diff[0].kind).to.equal('N')
       expect(diff[0].rhs).to.equal(undefined)
     })
@@ -655,11 +635,10 @@ describe('deep-diff — diff and observableDiff', () => {
       }
 
       const res = DeepDiff.diff(lhs, rhs)
-      expect(res).to.be.an('array')
-      expect(res).to.have.length(2)
+      expect(res).to.be.an('array').with.lengthOf(2)
 
-      let changed = 0,
-        deleted = 0
+      let changed = 0
+      let deleted = 0
       for (const difference of res) {
         if (difference.kind === 'D') {
           deleted += 1
@@ -676,24 +655,23 @@ describe('deep-diff — diff and observableDiff', () => {
   describe('Empty string object keys', () => {
     it('detects a new rhs-only property with an empty string key', () => {
       const diff = DeepDiff.diff({ a: 1 }, { a: 1, '': 'new' })
-      expect(diff).to.be.an('array')
-      expect(diff.length).to.equal(1)
+      expect(diff).to.be.an('array').with.lengthOf(1)
       expect(diff[0].kind).to.equal('N')
-      expect(diff[0].path[0]).to.equal('')
+      expect(diff[0].path).to.eql([''])
     })
 
     it('detects a deleted lhs-only property with an empty string key', () => {
       const diff = DeepDiff.diff({ a: 1, '': 'old' }, { a: 1 })
-      expect(diff).to.be.an('array')
-      expect(diff.length).to.equal(1)
+      expect(diff).to.be.an('array').with.lengthOf(1)
       expect(diff[0].kind).to.equal('D')
+      expect(diff[0].path).to.eql([''])
     })
 
     it('detects an edit to a property with an empty string key', () => {
       const diff = DeepDiff.diff({ '': 'old' }, { '': 'new' })
-      expect(diff).to.be.an('array')
-      expect(diff.length).to.equal(1)
+      expect(diff).to.be.an('array').with.lengthOf(1)
       expect(diff[0].kind).to.equal('E')
+      expect(diff[0].path).to.eql([''])
     })
   })
 
@@ -710,9 +688,7 @@ describe('deep-diff — diff and observableDiff', () => {
 
       const res = DeepDiff.diff(lhs, rhs)
 
-      expect(res).to.be.an('array')
-      expect(res).to.have.length(2)
-
+      expect(res).to.be.an('array').with.lengthOf(2)
       expect(res[1].kind).to.equal('N')
     })
 
@@ -727,9 +703,7 @@ describe('deep-diff — diff and observableDiff', () => {
 
       const res = DeepDiff.diff(lhs, rhs)
 
-      expect(res).to.be.an('array')
-      expect(res).to.have.length(2)
-
+      expect(res).to.be.an('array').with.lengthOf(2)
       expect(res[0].kind).to.equal('D')
     })
 
@@ -744,13 +718,11 @@ describe('deep-diff — diff and observableDiff', () => {
 
       const res = DeepDiff.diff(lhs, rhs)
 
-      expect(res).to.be.an('array')
-      expect(res).to.have.length(1)
-
+      expect(res).to.be.an('array').with.lengthOf(1)
       expect(res[0].kind).to.equal('E')
     })
 
-    it('should report "A" when a a change occurred within an array', () => {
+    it('should report "A" when a change occurred within an array', () => {
       const lhs = {
         foo: 'bar',
         with: ['a', 'few', 'elements']
@@ -763,9 +735,7 @@ describe('deep-diff — diff and observableDiff', () => {
 
       const res = DeepDiff.diff(lhs, rhs)
 
-      expect(res).to.be.an('array')
-      expect(res).to.have.length(3)
-
+      expect(res).to.be.an('array').with.lengthOf(3)
       expect(res[0].kind).to.equal('A')
     })
   })
@@ -786,22 +756,16 @@ describe('deep-diff — diff and observableDiff', () => {
     })
 
     it('terminates without throwing for a self-referential array with orderIndependent', () => {
-      // Bug 2 regression: stack.push happened before the orderIndependent sort, so the stack
-      // held pre-sort references and circular-ref detection never fired for sorted copies.
       const arr = [1, 2, 3]
       arr.push(arr)
       expect(() => DeepDiff.diff(arr, arr, { orderIndependent: true })).to.not.throw()
     })
-  })
 
-  describe('circular reference equality semantics', () => {
     it('treats two structurally-equal self-referential objects as equal', () => {
       const lhs = { val: 1 }
       lhs.self = lhs
       const rhs = { val: 1 }
       rhs.self = rhs
-      // Both sides cycle back to a counterpart already paired on the recursion stack,
-      // so they should be considered structurally equal — no diff.
       expect(DeepDiff.diff(lhs, rhs)).to.equal(undefined)
     })
 
@@ -815,6 +779,19 @@ describe('deep-diff — diff and observableDiff', () => {
       expect(selfDiff).to.exist
       expect(selfDiff.kind).to.equal('E')
     })
+
+    it('does not falsely trigger cycle detection when lhs and rhs share an acyclic subtree at different depths', () => {
+      const shared = { a: { b: 1 } }
+      const lhs = { x: shared }
+      const rhs = { x: { a: shared } }
+      const changes = DeepDiff.diff(lhs, rhs)
+
+      expect(changes).to.be.an('array').with.lengthOf(2)
+      expect(changes[0].kind).to.equal('D')
+      expect(changes[0].path).to.eql(['x', 'a', 'b'])
+      expect(changes[1].kind).to.equal('N')
+      expect(changes[1].path).to.eql(['x', 'a', 'a'])
+    })
   })
 
   describe('accumulator option', () => {
@@ -822,8 +799,7 @@ describe('deep-diff — diff and observableDiff', () => {
       const acc = []
       const result = DeepDiff.diff({ foo: 'bar' }, { foo: 'baz', qux: 1 }, { accumulator: acc })
       expect(result).to.equal(acc)
-      expect(acc).to.be.an('array')
-      expect(acc.length).to.equal(2)
+      expect(acc).to.be.an('array').with.lengthOf(2)
     })
 
     it('accumulator receives the same changes as a normal diff', () => {
@@ -841,6 +817,241 @@ describe('deep-diff — diff and observableDiff', () => {
       const result = DeepDiff.diff({ foo: 'bar' }, { foo: 'bar' }, { accumulator: acc })
       expect(result).to.equal(acc)
       expect(acc.length).to.equal(0)
+    })
+  })
+
+  describe('top-level primitive diffs', () => {
+    it('returns undefined for two equal primitive values', () => {
+      expect(DeepDiff.diff(42, 42)).to.equal(undefined)
+      expect(DeepDiff.diff('foo', 'foo')).to.equal(undefined)
+      expect(DeepDiff.diff(true, true)).to.equal(undefined)
+      expect(DeepDiff.diff(+0, -0)).to.equal(undefined)
+    })
+
+    it('returns a path-less DiffEdit for two differing primitives', () => {
+      const result = DeepDiff.diff(1, 2)
+      expect(result).to.be.an('array').with.lengthOf(1)
+      expect(result[0].kind).to.equal('E')
+      expect(result[0].lhs).to.equal(1)
+      expect(result[0].rhs).to.equal(2)
+      expect(result[0]).to.not.have.property('path')
+    })
+
+    it('returns undefined for two null values', () => {
+      expect(DeepDiff.diff(null, null)).to.equal(undefined)
+    })
+
+    it('returns undefined for two equal regexes', () => {
+      expect(DeepDiff.diff(/foo/, /foo/)).to.equal(undefined)
+    })
+  })
+
+  describe('BigInt support', () => {
+    it('returns undefined for two equal BigInt values', () => {
+      expect(DeepDiff.diff(1n, 1n)).to.equal(undefined)
+    })
+
+    it('emits a DiffEdit for two differing BigInt values', () => {
+      const result = DeepDiff.diff(1n, 2n)
+      expect(result).to.be.an('array').with.lengthOf(1)
+      expect(result[0].kind).to.equal('E')
+      expect(result[0].lhs).to.equal(1n)
+      expect(result[0].rhs).to.equal(2n)
+    })
+
+    it('emits a DiffEdit when a BigInt is compared to a number with the same numeric value', () => {
+      const result = DeepDiff.diff(1n, 1)
+      expect(result).to.be.an('array').with.lengthOf(1)
+      expect(result[0].kind).to.equal('E')
+    })
+  })
+
+  describe('observableDiff without observer', () => {
+    it('returns an empty array when there are no changes', () => {
+      const result = DeepDiff.observableDiff({ a: 1 }, { a: 1 })
+      expect(result).to.be.an('array').with.lengthOf(0)
+    })
+
+    it('returns the changes array when there are differences', () => {
+      const result = DeepDiff.observableDiff({ a: 1 }, { a: 2 })
+      expect(result).to.be.an('array').with.lengthOf(1)
+      expect(result[0].kind).to.equal('E')
+    })
+
+    it('does not throw when called with options but no observer', () => {
+      const acc = []
+      const result = DeepDiff.observableDiff({ a: 1 }, { a: 2 }, undefined, { accumulator: acc })
+      expect(result).to.equal(acc)
+      expect(acc.length).to.equal(1)
+    })
+
+    it('handles null options and non-function observer gracefully', () => {
+      expect(DeepDiff.diff({ a: 1 }, { a: 2 }, null))
+        .to.be.an('array')
+        .with.lengthOf(1)
+      expect(DeepDiff.observableDiff({ a: 1 }, { a: 2 }, 'not-a-fn', null))
+        .to.be.an('array')
+        .with.lengthOf(1)
+    })
+  })
+
+  describe('Map, Set, and TypedArray support', () => {
+    it('should detect differences between two Maps', () => {
+      const map1 = new Map([
+        ['a', 1],
+        ['b', 2]
+      ])
+      const map2 = new Map([
+        ['a', 1],
+        ['b', 3],
+        ['c', 4]
+      ])
+      const diff = DeepDiff.diff(map1, map2)
+
+      expect(diff).to.be.an('array').with.lengthOf(2)
+
+      const edit = diff.find((d) => d.path && d.path[0] === 'b')
+      expect(edit).to.exist
+      expect(edit.kind).to.equal('E')
+      expect(edit.lhs).to.equal(2)
+      expect(edit.rhs).to.equal(3)
+
+      const addition = diff.find((d) => d.path && d.path[0] === 'c')
+      expect(addition).to.exist
+      expect(addition.kind).to.equal('N')
+      expect(addition.rhs).to.equal(4)
+    })
+
+    it('should detect differences between two Sets', () => {
+      const set1 = new Set([1, 2])
+      const set2 = new Set([1, 3])
+      const diff = DeepDiff.diff(set1, set2)
+
+      expect(diff).to.be.an('array').with.lengthOf(1)
+      expect(diff[0].kind).to.equal('E')
+      expect(diff[0].lhs).to.eql(set1)
+      expect(diff[0].rhs).to.eql(set2)
+
+      expect(DeepDiff.diff(new Set([1]), new Set([1, 2])))
+        .to.be.an('array')
+        .with.lengthOf(1)
+    })
+
+    it('should detect differences between two TypedArrays', () => {
+      const ta1 = new Uint8Array([1, 2, 3])
+      const ta2 = new Uint8Array([1, 2, 4])
+      const diff = DeepDiff.diff(ta1, ta2)
+
+      expect(diff).to.be.an('array').with.lengthOf(1)
+      expect(diff[0].kind).to.equal('E')
+      expect(diff[0].lhs).to.eql(ta1)
+      expect(diff[0].rhs).to.eql(ta2)
+    })
+
+    it('should not be spoofed by Symbol.toStringTag', () => {
+      const dateSpoof = { [Symbol.toStringTag]: 'Date' }
+      const realDate = new Date(2010, 1, 1)
+      const diff = DeepDiff.diff(dateSpoof, realDate)
+
+      expect(diff).to.be.an('array').with.lengthOf(1)
+      expect(diff[0].kind).to.equal('E')
+    })
+
+    it('should detect deletion of Map keys', () => {
+      const map1 = new Map([
+        ['a', 1],
+        ['b', 2]
+      ])
+      const map2 = new Map([['a', 1]])
+      const diff = DeepDiff.diff(map1, map2)
+
+      expect(diff).to.be.an('array').with.lengthOf(1)
+      expect(diff[0].kind).to.equal('D')
+      expect(diff[0].path).to.eql(['b'])
+    })
+
+    it('should report no changes for equal TypedArrays', () => {
+      const ta1 = new Uint8Array([1, 2, 3])
+      const ta2 = new Uint8Array([1, 2, 3])
+
+      expect(DeepDiff.diff(ta1, ta2)).to.equal(undefined)
+    })
+
+    it('should report differences for TypedArrays of different lengths', () => {
+      const ta1 = new Uint8Array([1])
+      const ta2 = new Uint8Array([1, 2])
+      const diff = DeepDiff.diff(ta1, ta2)
+
+      expect(diff).to.be.an('array').with.lengthOf(1)
+      expect(diff[0].kind).to.equal('E')
+    })
+
+    it('should handle Map entries with undefined values and null/undefined keys', () => {
+      const mWithUndefined = new Map([['a', undefined]])
+      const mEmpty = new Map()
+      const mWithNumber = new Map([['a', 1]])
+
+      const deletedDiff = DeepDiff.diff(mWithUndefined, mEmpty)
+      expect(deletedDiff).to.be.an('array').with.lengthOf(1)
+      expect(deletedDiff[0].kind).to.equal('D')
+      expect(deletedDiff[0].path).to.eql(['a'])
+      expect(deletedDiff[0].lhs).to.equal(undefined)
+
+      const addedDiff = DeepDiff.diff(mEmpty, mWithUndefined)
+      expect(addedDiff).to.be.an('array').with.lengthOf(1)
+      expect(addedDiff[0].kind).to.equal('N')
+      expect(addedDiff[0].path).to.eql(['a'])
+      expect(addedDiff[0].rhs).to.equal(undefined)
+
+      const editedToUndefined = DeepDiff.diff(mWithNumber, mWithUndefined)
+      expect(editedToUndefined).to.be.an('array').with.lengthOf(1)
+      expect(editedToUndefined[0].kind).to.equal('E')
+      expect(editedToUndefined[0].lhs).to.equal(1)
+      expect(editedToUndefined[0].rhs).to.equal(undefined)
+
+      expect(DeepDiff.diff(mWithUndefined, new Map([['a', undefined]]))).to.equal(undefined)
+
+      const mNullKey1 = new Map([
+        [null, 1],
+        [undefined, 2]
+      ])
+      const mNullKey2 = new Map([
+        [null, 99],
+        [undefined, 2]
+      ])
+      const nullKeyDiff = DeepDiff.diff(mNullKey1, mNullKey2)
+      expect(nullKeyDiff).to.be.an('array').with.lengthOf(1)
+      expect(nullKeyDiff[0].kind).to.equal('E')
+      expect(nullKeyDiff[0].path).to.eql([null])
+    })
+
+    it('should differentiate TypedArrays of different view types with the same elements', () => {
+      const u8 = new Uint8Array([1, 2, 3])
+      const i32 = new Int32Array([1, 2, 3])
+      const f64 = new Float64Array([1, 2, 3])
+
+      expect(DeepDiff.diff(u8, i32)).to.be.an('array').with.lengthOf(1)
+      expect(DeepDiff.diff(u8, f64)).to.be.an('array').with.lengthOf(1)
+      expect(getOrderIndependentHash(u8)).to.not.equal(getOrderIndependentHash(i32))
+    })
+
+    it('should handle BigInt64Array, Float64Array NaN, and fractional Float64Array values', () => {
+      const bi1 = new BigInt64Array([1n, 2n])
+      const bi2 = new BigInt64Array([1n, 3n])
+      expect(DeepDiff.diff(bi1, new BigInt64Array([1n, 2n]))).to.equal(undefined)
+      expect(DeepDiff.diff(bi1, bi2)).to.be.an('array').with.lengthOf(1)
+      expect(DeepDiff.diff([bi1], [new BigInt64Array([1n, 2n])], { orderIndependent: true })).to.equal(undefined)
+
+      const nanArr1 = new Float64Array([1, NaN])
+      const nanArr2 = new Float64Array([1, NaN])
+      const nanArr3 = new Float64Array([2, NaN])
+      expect(DeepDiff.diff(nanArr1, nanArr2)).to.equal(undefined)
+      expect(getOrderIndependentHash(nanArr1)).to.equal(getOrderIndependentHash(nanArr2))
+      expect(getOrderIndependentHash(nanArr1)).to.not.equal(getOrderIndependentHash(nanArr3))
+
+      const frac1 = new Float64Array([0.1, 0.2])
+      const frac2 = new Float64Array([0.8, 0.9])
+      expect(getOrderIndependentHash(frac1)).to.not.equal(getOrderIndependentHash(frac2))
     })
   })
 })
@@ -926,6 +1137,52 @@ describe('deep-diff — order-independent comparison', () => {
 
       it('should work on empty array and array with 0', () => {
         differentHash([], [0])
+      })
+
+      it('should distinguish empty objects inside arrays and Sets', () => {
+        differentHash([], [{}])
+        differentHash([{}], [{}, {}])
+        expect(DeepDiff.diff([[]], [[{}]], { orderIndependent: true }))
+          .to.be.an('array')
+          .with.lengthOf(1)
+        expect(DeepDiff.diff(new Set([[]]), new Set([[{}]])))
+          .to.be.an('array')
+          .with.lengthOf(1)
+      })
+
+      it('should preserve Date millisecond precision and RegExp flags', () => {
+        const d1 = new Date(1000)
+        const d2 = new Date(1500)
+        differentHash(d1, d2)
+        expect(DeepDiff.diff(new Set([d1]), new Set([d2])))
+          .to.be.an('array')
+          .with.lengthOf(1)
+        expect(DeepDiff.diff([d1], [d2], { orderIndependent: true }))
+          .to.be.an('array')
+          .with.lengthOf(1)
+
+        expect(DeepDiff.diff(new Date(NaN), new Date(NaN))).to.equal(undefined)
+
+        const r1 = /foo/g
+        const r2 = /foo/i
+        differentHash(r1, r2)
+        expect(DeepDiff.diff(new Set([r1]), new Set([r2])))
+          .to.be.an('array')
+          .with.lengthOf(1)
+      })
+
+      it('should handle circular Map, Set, and Object without throwing', () => {
+        const cyclicMap = new Map()
+        cyclicMap.set('self', cyclicMap)
+        expect(() => getOrderIndependentHash(cyclicMap)).to.not.throw()
+
+        const cyclicSet = new Set()
+        cyclicSet.add(cyclicSet)
+        expect(() => getOrderIndependentHash(cyclicSet)).to.not.throw()
+
+        const cyclicObj = { a: 1 }
+        cyclicObj.self = cyclicObj
+        expect(() => getOrderIndependentHash(cyclicObj)).to.not.throw()
       })
     })
 
@@ -1016,8 +1273,15 @@ describe('deep-diff — order-independent comparison', () => {
       const rhs = [2, 2, 3]
 
       const diff = DeepDiff.diff(lhs, rhs)
+      expect(diff).to.be.an('array').with.lengthOf(1)
+    })
 
-      expect(diff.length).to.equal(1)
+    it('should hash Map, Set, and TypedArrays correctly under order-independent comparison', () => {
+      const lhs = [new Map([['a', 1]]), new Set([1, 2]), new Uint8Array([1, 2])]
+      const rhs = [new Set([1, 2]), new Uint8Array([1, 2]), new Map([['a', 1]])]
+      const diff = DeepDiff.diff(lhs, rhs, { orderIndependent: true })
+
+      expect(diff).to.equal(undefined)
     })
   })
 
@@ -1038,8 +1302,7 @@ describe('deep-diff — order-independent comparison', () => {
       const lhs = [1, 2, 3]
       const rhs = [1, 2, 4]
       const result = DeepDiff.diff(lhs, rhs, { orderIndependent: true })
-      expect(result).to.be.an('array')
-      expect(result.length).to.equal(1)
+      expect(result).to.be.an('array').with.lengthOf(1)
       expect(result[0].kind).to.equal('E')
       expect(result[0].lhs).to.eql(lhs)
       expect(result[0].rhs).to.eql(rhs)
@@ -1049,8 +1312,7 @@ describe('deep-diff — order-independent comparison', () => {
       const lhs = { arr: [1, 2, 3] }
       const rhs = { arr: [1, 2, 4] }
       const result = DeepDiff.diff(lhs, rhs, { orderIndependent: true })
-      expect(result).to.be.an('array')
-      expect(result.length).to.equal(1)
+      expect(result).to.be.an('array').with.lengthOf(1)
       expect(result[0].kind).to.equal('E')
       expect(result[0].path).to.eql(['arr'])
     })
@@ -1062,180 +1324,6 @@ describe('deep-diff — order-independent comparison', () => {
       const lhs = { arr: [{ x: shared, y: shared }] }
       const rhs = { arr: [{ x: { a: 1 }, y: { a: 1 } }] }
       const diff = DeepDiff.diff(lhs, rhs, { orderIndependent: true })
-      expect(diff).to.equal(undefined)
-    })
-  })
-
-  describe('top-level primitive diffs', () => {
-    it('returns undefined for two equal primitive values', () => {
-      expect(DeepDiff.diff(42, 42)).to.equal(undefined)
-      expect(DeepDiff.diff('foo', 'foo')).to.equal(undefined)
-      expect(DeepDiff.diff(true, true)).to.equal(undefined)
-    })
-
-    it('returns a path-less DiffEdit for two differing primitives', () => {
-      const result = DeepDiff.diff(1, 2)
-      expect(result).to.be.an('array')
-      expect(result.length).to.equal(1)
-      expect(result[0].kind).to.equal('E')
-      expect(result[0].lhs).to.equal(1)
-      expect(result[0].rhs).to.equal(2)
-      expect(result[0]).to.not.have.property('path')
-    })
-
-    it('returns undefined for two null values', () => {
-      expect(DeepDiff.diff(null, null)).to.equal(undefined)
-    })
-
-    it('returns undefined for two equal regexes', () => {
-      expect(DeepDiff.diff(/foo/, /foo/)).to.equal(undefined)
-    })
-  })
-
-  describe('BigInt support', () => {
-    it('returns undefined for two equal BigInt values', () => {
-      expect(DeepDiff.diff(1n, 1n)).to.equal(undefined)
-    })
-
-    it('emits a DiffEdit for two differing BigInt values', () => {
-      const result = DeepDiff.diff(1n, 2n)
-      expect(result).to.be.an('array')
-      expect(result.length).to.equal(1)
-      expect(result[0].kind).to.equal('E')
-      expect(result[0].lhs).to.equal(1n)
-      expect(result[0].rhs).to.equal(2n)
-    })
-
-    it('emits a DiffEdit when a BigInt is compared to a number with the same numeric value', () => {
-      const result = DeepDiff.diff(1n, 1)
-      expect(result).to.be.an('array')
-      expect(result[0].kind).to.equal('E')
-    })
-  })
-
-  describe('observableDiff without observer', () => {
-    it('returns an empty array when there are no changes', () => {
-      const result = DeepDiff.observableDiff({ a: 1 }, { a: 1 })
-      expect(result).to.be.an('array')
-      expect(result.length).to.equal(0)
-    })
-
-    it('returns the changes array when there are differences', () => {
-      const result = DeepDiff.observableDiff({ a: 1 }, { a: 2 })
-      expect(result).to.be.an('array')
-      expect(result.length).to.equal(1)
-      expect(result[0].kind).to.equal('E')
-    })
-
-    it('does not throw when called with options but no observer', () => {
-      const acc = []
-      const result = DeepDiff.observableDiff({ a: 1 }, { a: 2 }, undefined, { accumulator: acc })
-      expect(result).to.equal(acc)
-      expect(acc.length).to.equal(1)
-    })
-  })
-
-  describe('Map, Set, and TypedArray support', () => {
-    it('should detect differences between two Maps', () => {
-      const map1 = new Map([
-        ['a', 1],
-        ['b', 2]
-      ])
-      const map2 = new Map([
-        ['a', 1],
-        ['b', 3],
-        ['c', 4]
-      ])
-      const diff = DeepDiff.diff(map1, map2)
-
-      expect(diff).to.be.an('array')
-      expect(diff.length).to.equal(2)
-
-      // Edit to 'b'
-      const edit = diff.find((d) => d.path && d.path[0] === 'b')
-      expect(edit).to.exist
-      expect(edit.kind).to.equal('E')
-      expect(edit.lhs).to.equal(2)
-      expect(edit.rhs).to.equal(3)
-
-      // Addition of 'c'
-      const addition = diff.find((d) => d.path && d.path[0] === 'c')
-      expect(addition).to.exist
-      expect(addition.kind).to.equal('N')
-      expect(addition.rhs).to.equal(4)
-    })
-
-    it('should detect differences between two Sets', () => {
-      const set1 = new Set([1, 2])
-      const set2 = new Set([1, 3])
-      const diff = DeepDiff.diff(set1, set2)
-
-      expect(diff).to.be.an('array')
-      expect(diff.length).to.equal(1)
-      expect(diff[0].kind).to.equal('E')
-      expect(diff[0].lhs).to.eql(set1)
-      expect(diff[0].rhs).to.eql(set2)
-    })
-
-    it('should detect differences between two TypedArrays', () => {
-      const ta1 = new Uint8Array([1, 2, 3])
-      const ta2 = new Uint8Array([1, 2, 4])
-      const diff = DeepDiff.diff(ta1, ta2)
-
-      expect(diff).to.be.an('array')
-      expect(diff.length).to.equal(1)
-      expect(diff[0].kind).to.equal('E')
-      expect(diff[0].lhs).to.eql(ta1)
-      expect(diff[0].rhs).to.eql(ta2)
-    })
-
-    it('should not be spoofed by Symbol.toStringTag', () => {
-      const dateSpoof = { [Symbol.toStringTag]: 'Date' }
-      const realDate = new Date(2010, 1, 1)
-      const diff = DeepDiff.diff(dateSpoof, realDate)
-
-      expect(diff).to.be.an('array')
-      expect(diff.length).to.equal(1)
-      expect(diff[0].kind).to.equal('E')
-    })
-
-    it('should detect deletion of Map keys', () => {
-      const map1 = new Map([
-        ['a', 1],
-        ['b', 2]
-      ])
-      const map2 = new Map([['a', 1]])
-      const diff = DeepDiff.diff(map1, map2)
-
-      expect(diff).to.be.an('array')
-      expect(diff.length).to.equal(1)
-      expect(diff[0].kind).to.equal('D')
-      expect(diff[0].path[0]).to.equal('b')
-    })
-
-    it('should report no changes for equal TypedArrays', () => {
-      const ta1 = new Uint8Array([1, 2, 3])
-      const ta2 = new Uint8Array([1, 2, 3])
-      const diff = DeepDiff.diff(ta1, ta2)
-
-      expect(diff).to.equal(undefined)
-    })
-
-    it('should report differences for TypedArrays of different lengths', () => {
-      const ta1 = new Uint8Array([1])
-      const ta2 = new Uint8Array([1, 2])
-      const diff = DeepDiff.diff(ta1, ta2)
-
-      expect(diff).to.be.an('array')
-      expect(diff.length).to.equal(1)
-      expect(diff[0].kind).to.equal('E')
-    })
-
-    it('should hash Map, Set, and TypedArrays correctly under order-independent comparison', () => {
-      const lhs = [new Map([['a', 1]]), new Set([1, 2]), new Uint8Array([1, 2])]
-      const rhs = [new Set([1, 2]), new Uint8Array([1, 2]), new Map([['a', 1]])]
-      const diff = DeepDiff.diff(lhs, rhs, { orderIndependent: true })
-
       expect(diff).to.equal(undefined)
     })
   })
