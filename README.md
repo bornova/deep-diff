@@ -97,7 +97,7 @@ Differences are reported as one or more change records. Change records have the 
 - `index` - when kind === 'A', indicates the array index where the change occurred
 - `item` - when kind === 'A', contains a nested change record indicating the change that occurred at the array index
 
-Change records are generated for all structural differences between `origin` and `comparand`. The methods only consider an object's own properties and array elements; those inherited from an object's prototype chain are not considered.
+Change records are generated for all structural differences between `origin` and `comparand`. The methods consider an object's own enumerable string and `Symbol` properties, array elements, and `Map` entries; properties inherited from an object's prototype chain are not considered. Built-in support is also included for `Date`, `RegExp`, `BigInt`, `Set`, and `TypedArray` comparisons.
 
 Changes to arrays are recorded simplistically. We care most about the shape of the structure; therefore we don't take the time to determine if an object moved from one slot in the array to another. Instead, we only record the structural
 differences. If the structural differences are applied from the `comparand` to the `origin` then the two objects will compare as "deep equal" using most `isEqual` implementations such as found in [lodash](https://github.com/bestiejs/lodash) or [underscore](http://underscorejs.org/).
@@ -143,7 +143,7 @@ observableDiff(lhs, rhs, (d) => {
 - `observableDiff(lhs, rhs, observer, [options: { prefilter, accumulator, orderIndependent }])` &mdash; calculates the differences between two objects and reports each to an observer function, using the specified `prefilter`, `accumulator`, and `orderIndependent` options.
 - `applyDiff(target, source, filter)` &mdash; mutates `target` in place so that it becomes structurally equal to `source`, optionally filtering each difference. Note the direction: `target` is the operand that is changed; `source` is the shape it should match.
 - `applyChange(target, source, change)` &mdash; applies a single change record to a target object. The `source` argument is unused; the two-argument form `applyChange(target, change)` is also accepted.
-- `revertChange(target, source, change)` &mdash; reverts a single change record against a target object. The `source` argument is required to be truthy — if either `target` or `source` is falsy, the call is a no-op.
+- `revertChange(target, source, change)` &mdash; reverts a single change record against a target object. The two-argument form `revertChange(target, change)` is also accepted; in the three-argument form, `source` is required to be truthy.
 
 The library also exports the `Diff` base class, the `DiffArray` / `DiffEdit` / `DiffNew` / `DiffDeleted` subclasses, and a `KIND` constant (`{ NEW: 'N', EDIT: 'E', ARRAY: 'A', DELETED: 'D' }`) for consumers that want stronger types or want to construct change records manually.
 
@@ -253,4 +253,35 @@ The `observableDiff` function calculates the difference between two objects and 
   - `prefilter`: A function that determines whether difference analysis should continue down the object graph. If it is an object, it has the following properties:
     - `prefilter`: Same `prefilter` function as above.
     - `normalize`: A function that pre-processes every _leaf_ of the tree.
+  - `accumulator`: An optional accumulator array. Each difference is pushed to the specified accumulator and returned as the result.
   - `orderIndependent`: When `true`, arrays are compared as multisets. If two arrays differ as multisets, a single `DiffEdit` is emitted at the array's path. Default is `false`.
+
+### `applyDiff`
+
+The `applyDiff` function calculates the differences between `target` and `source` and applies them in place to `target`.
+
+#### Arguments
+
+- `target` - The left-hand operand to mutate in place.
+- `source` - The right-hand operand whose structure `target` should match.
+- `filter` - Optional `(target, source, change) => boolean` callback; when provided, only changes for which `filter` returns a truthy value are applied.
+
+### `applyChange`
+
+The `applyChange` function applies a single change record to `target` in place.
+
+#### Arguments
+
+- `target` - The target object, `Array`, or `Map` to mutate.
+- `source` - Unused in the three-argument signature (accepted for backwards compatibility). In the two-argument signature `applyChange(target, change)`, this parameter is the `change` record.
+- `change` - The change record to apply (when using the three-argument form).
+
+### `revertChange`
+
+The `revertChange` function reverts a single change record against `target` in place (the inverse of `applyChange`).
+
+#### Arguments
+
+- `target` - The target object, `Array`, or `Map` to mutate.
+- `source` - Required to be truthy in the three-argument signature (if either `target` or `source` is falsy, the call is a no-op). In the two-argument signature `revertChange(target, change)`, this parameter is the `change` record.
+- `change` - The change record to revert (when using the three-argument form).
