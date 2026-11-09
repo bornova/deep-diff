@@ -4,7 +4,7 @@ import terser from '@rollup/plugin-terser'
 
 fs.rmSync('dist', { recursive: true, force: true })
 
-const pkg = JSON.parse(fs.readFileSync('./package.json'))
+const pkg = JSON.parse(fs.readFileSync('./package.json', 'utf8'))
 const banner = `/* ${pkg.name} v${pkg.version} */`
 const input = 'src/index.js'
 
