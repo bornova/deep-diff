@@ -1,5 +1,5 @@
 import { Diff, DiffArray, DiffDeleted, DiffEdit, DiffNew, KIND } from './models.js'
-import { leafEqual, multisetEqual, realTypeOf } from './utils.js'
+import { getOwnKeys, leafEqual, multisetEqual, realTypeOf, typedArrayEqual } from './utils.js'
 
 /**
  * @typedef {import('./models.js').DiffChange} DiffChange
@@ -15,99 +15,78 @@ import { leafEqual, multisetEqual, realTypeOf } from './utils.js'
  *   Either a function `(path, key) => skip?` or an object with optional
  *   `prefilter` and `normalize` callbacks. `path` is the parent path
  *   (excludes `key`).
- * @property {DiffChange[]} [accumulator] - When provided, changes are
- *   pushed directly into this array (no intermediate allocation) and it is
- *   returned as the result.
+ * @property {DiffChange[]} [accumulator]
+ *   When provided, changes are pushed directly into this array (no
+ *   intermediate allocation) and it is returned as the result.
  * @property {boolean} [orderIndependent=false]
  *   When `true`, arrays are compared as multisets. If they differ, a single
  *   `DiffEdit` at the array's path is emitted.
  */
 
 /**
- * Returns true if `key` is an own (non-inherited) property of `parent`.
- * Tolerates `parent` being `null`/`undefined` and `key` being `undefined`
- * (both can occur at the recursion root before any parent is established).
- *
- * @param {*} parent - The object to check (may be `null` or `undefined`).
- * @param {PropertyKey | undefined} key - The key to look up.
- * @returns {boolean}
- */
-function hasOwn(parent, key) {
-  return parent != null && key !== undefined && Object.hasOwn(parent, key)
-}
-
-/**
- * Recursive walker. `stack` is an array of `{ lhs, rhs }` pairs currently on
- * the recursion stack, used for cycle detection. `currentPath` is mutated
- * (push/pop) to avoid allocating a new array per node; emitted changes
- * snapshot it via the `Diff` constructor.
+ * Recursive walker for child properties/elements. `stack` tracks active
+ * `{ lhs, rhs }` ancestor pairs on the recursion stack for cycle detection.
+ * `currentPath` is mutated (push/pop) to avoid allocating a new array per
+ * node; emitted changes snapshot it via the `Diff` constructor.
  *
  * @param {*} lhs - Left-hand side value.
  * @param {*} rhs - Right-hand side value.
  * @param {DiffChange[]} changes - Accumulator array for emitted changes.
  * @param {PrefilterFn | PrefilterObject | undefined} prefilter - Optional filter/normalizer.
  * @param {PropertyKey[]} currentPath - Mutable path to the current node (shared across calls).
- * @param {PropertyKey | undefined} key - The key used to reach the current node from its parent.
- * @param {{pairs: Map<object, object>, parents: Array<{lhs: object, rhs: object}>}} stack - Cycle-detection state.
+ * @param {*} key - The key used to reach the current node from its parent.
+ * @param {{lhsPairs: Map<object, object>, rhsPairs: Map<object, object>}} stack - Cycle-detection state.
  * @param {boolean | undefined} orderIndependent - When true, arrays are compared as multisets.
+ * @param {boolean} ldefined - Whether `lhs` is defined (own property / Map entry exists).
+ * @param {boolean} rdefined - Whether `rhs` is defined (own property / Map entry exists).
  */
-function deepDiff(lhs, rhs, changes, prefilter, currentPath, key, stack, orderIndependent) {
-  const hasKey = key !== undefined && key !== null
+function deepDiff(lhs, rhs, changes, prefilter, currentPath, key, stack, orderIndependent, ldefined, rdefined) {
+  if (prefilter) {
+    const pathCopy = currentPath.slice()
 
-  if (hasKey) {
-    if (prefilter) {
-      if (typeof prefilter === 'function') {
-        if (prefilter(currentPath, key)) return
-      } else {
-        if (prefilter.prefilter?.(currentPath, key)) return
+    if (typeof prefilter === 'function') {
+      if (prefilter(pathCopy, key)) return
+    } else {
+      if (prefilter.prefilter?.(pathCopy, key)) return
 
-        if (prefilter.normalize) {
-          const alt = prefilter.normalize(currentPath, key, lhs, rhs)
+      if (prefilter.normalize) {
+        const alt = prefilter.normalize(pathCopy, key, lhs, rhs)
 
-          if (alt) {
-            lhs = alt[0]
-            rhs = alt[1]
-          }
+        if (alt) {
+          lhs = alt[0]
+          rhs = alt[1]
+          ldefined = lhs !== undefined
+          rdefined = rhs !== undefined
         }
       }
     }
-
-    currentPath.push(key)
   }
 
+  currentPath.push(key)
+
   try {
-    diffValues(lhs, rhs, changes, prefilter, currentPath, key, stack, orderIndependent)
+    diffValues(lhs, rhs, changes, prefilter, currentPath, stack, orderIndependent, ldefined, rdefined)
   } finally {
-    if (hasKey) currentPath.pop()
+    currentPath.pop()
   }
 }
 
 /**
  * Core value-level comparison. Handles primitives, dates, regexes, cycle
- * detection, arrays, and objects. Pushes changes into `changes`.
+ * detection, arrays, Maps, Sets, TypedArrays, and objects. Pushes changes
+ * into `changes`.
  *
  * @param {*} lhs - Left-hand side value.
  * @param {*} rhs - Right-hand side value.
  * @param {DiffChange[]} changes - Accumulator array for emitted changes.
  * @param {PrefilterFn | PrefilterObject | undefined} prefilter - Optional filter/normalizer.
  * @param {PropertyKey[]} currentPath - Mutable path to the current node (shared across calls).
- * @param {PropertyKey | undefined} key - The key used to reach the current node from its parent.
- * @param {{pairs: Map<object, object>, parents: Array<{lhs: object, rhs: object}>}} stack - Cycle-detection state.
+ * @param {{lhsPairs: Map<object, object>, rhsPairs: Map<object, object>}} stack - Cycle-detection state.
  * @param {boolean | undefined} orderIndependent - When true, arrays are compared as multisets.
+ * @param {boolean} ldefined - Whether `lhs` is defined.
+ * @param {boolean} rdefined - Whether `rhs` is defined.
  */
-function diffValues(lhs, rhs, changes, prefilter, currentPath, key, stack, orderIndependent) {
-  if (realTypeOf(lhs) === 'regexp' && realTypeOf(rhs) === 'regexp') {
-    lhs = lhs.toString()
-    rhs = rhs.toString()
-  }
-
-  const ltype = typeof lhs
-  const rtype = typeof rhs
-  const lastStack = stack.parents.at(-1)
-
-  const ldefined = ltype !== 'undefined' || hasOwn(lastStack?.lhs, key)
-  const rdefined = rtype !== 'undefined' || hasOwn(lastStack?.rhs, key)
-
+function diffValues(lhs, rhs, changes, prefilter, currentPath, stack, orderIndependent, ldefined, rdefined) {
   if (!ldefined && rdefined) {
     changes.push(new DiffNew(currentPath, rhs))
 
@@ -120,24 +99,28 @@ function diffValues(lhs, rhs, changes, prefilter, currentPath, key, stack, order
     return
   }
 
-  const ltrue = realTypeOf(lhs)
+  if (lhs === rhs) {
+    return
+  }
 
-  if (ltrue !== realTypeOf(rhs)) {
+  let ltrue = realTypeOf(lhs)
+  let rtrue = realTypeOf(rhs)
+
+  if (ltrue === 'regexp' && rtrue === 'regexp') {
+    lhs = RegExp.prototype.toString.call(lhs)
+    rhs = RegExp.prototype.toString.call(rhs)
+    ltrue = 'string'
+    rtrue = 'string'
+  }
+
+  if (ltrue !== rtrue) {
     changes.push(new DiffEdit(currentPath, lhs, rhs))
 
     return
   }
 
-  if (ltrue === 'date') {
-    if (!leafEqual(lhs, rhs)) changes.push(new DiffEdit(currentPath, lhs, rhs))
-
-    return
-  }
-
   if (ltrue === 'set') {
-    const larr = Array.from(lhs)
-    const rarr = Array.from(rhs)
-    if (!multisetEqual(larr, rarr)) {
+    if (!multisetEqual(lhs, rhs)) {
       changes.push(new DiffEdit(currentPath, lhs, rhs))
     }
     return
@@ -150,27 +133,26 @@ function diffValues(lhs, rhs, changes, prefilter, currentPath, key, stack, order
     return
   }
 
-  if (ltype === 'object' && lhs !== null && rhs !== null) {
-    // Cycle detection in O(1) via the pair map: paired-on-stack ⇒ equal;
+  if (ltrue === 'array' || ltrue === 'map' || ltrue === 'object') {
+    // Cycle detection in O(1) via separate lhs/rhs pair maps: paired-on-stack ⇒ equal;
     // either side already on the stack but with a different counterpart ⇒ edit.
-    const pairs = stack.pairs
-    const lhsCounterpart = pairs.get(lhs)
-    const rhsCounterpart = pairs.get(rhs)
+    const { lhsPairs, rhsPairs } = stack
+    const lhsCounterpart = lhsPairs.get(lhs)
+    const rhsCounterpart = rhsPairs.get(rhs)
 
     if (lhsCounterpart === rhs && rhsCounterpart === lhs) return
 
     if (lhsCounterpart !== undefined || rhsCounterpart !== undefined) {
-      if (lhs !== rhs) changes.push(new DiffEdit(currentPath, lhs, rhs))
+      changes.push(new DiffEdit(currentPath, lhs, rhs))
 
       return
     }
 
-    pairs.set(lhs, rhs)
-    pairs.set(rhs, lhs)
-    stack.parents.push({ lhs, rhs })
+    lhsPairs.set(lhs, rhs)
+    rhsPairs.set(rhs, lhs)
 
     try {
-      if (Array.isArray(lhs)) {
+      if (ltrue === 'array') {
         diffArrays(lhs, rhs, changes, prefilter, currentPath, stack, orderIndependent)
       } else if (ltrue === 'map') {
         diffMaps(lhs, rhs, changes, prefilter, currentPath, stack, orderIndependent)
@@ -178,9 +160,8 @@ function diffValues(lhs, rhs, changes, prefilter, currentPath, key, stack, order
         diffObjects(lhs, rhs, changes, prefilter, currentPath, stack, orderIndependent)
       }
     } finally {
-      pairs.delete(lhs)
-      pairs.delete(rhs)
-      stack.parents.pop()
+      lhsPairs.delete(lhs)
+      rhsPairs.delete(rhs)
     }
 
     return
@@ -200,7 +181,7 @@ function diffValues(lhs, rhs, changes, prefilter, currentPath, key, stack, order
  * @param {DiffChange[]} changes - Accumulator array for emitted changes.
  * @param {PrefilterFn | PrefilterObject | undefined} prefilter - Optional filter/normalizer.
  * @param {PropertyKey[]} currentPath - Mutable path to the current node (shared across calls).
- * @param {{pairs: Map<object, object>, parents: Array<{lhs: object, rhs: object}>}} stack - Cycle-detection state.
+ * @param {{lhsPairs: Map<object, object>, rhsPairs: Map<object, object>}} stack - Cycle-detection state.
  * @param {boolean | undefined} orderIndependent - When true, arrays are compared as multisets.
  */
 function diffArrays(lhs, rhs, changes, prefilter, currentPath, stack, orderIndependent) {
@@ -218,7 +199,7 @@ function diffArrays(lhs, rhs, changes, prefilter, currentPath, stack, orderIndep
     } else if (i >= rhs.length) {
       changes.push(new DiffArray(currentPath, i, new DiffDeleted(undefined, lhs[i])))
     } else {
-      deepDiff(lhs[i], rhs[i], changes, prefilter, currentPath, i, stack, orderIndependent)
+      deepDiff(lhs[i], rhs[i], changes, prefilter, currentPath, i, stack, orderIndependent, true, true)
     }
   }
 }
@@ -232,25 +213,23 @@ function diffArrays(lhs, rhs, changes, prefilter, currentPath, stack, orderIndep
  * @param {DiffChange[]} changes - Accumulator array for emitted changes.
  * @param {PrefilterFn | PrefilterObject | undefined} prefilter - Optional filter/normalizer.
  * @param {PropertyKey[]} currentPath - Mutable path to the current node (shared across calls).
- * @param {{pairs: Map<object, object>, parents: Array<{lhs: object, rhs: object}>}} stack - Cycle-detection state.
+ * @param {{lhsPairs: Map<object, object>, rhsPairs: Map<object, object>}} stack - Cycle-detection state.
  * @param {boolean | undefined} orderIndependent - When true, arrays are compared as multisets.
  */
 function diffObjects(lhs, rhs, changes, prefilter, currentPath, stack, orderIndependent) {
-  const lkeys = Object.keys(lhs).concat(Object.getOwnPropertySymbols(lhs))
-  const rkeys = Object.keys(rhs).concat(Object.getOwnPropertySymbols(rhs))
-  const remaining = new Set(rkeys)
+  const lkeys = getOwnKeys(lhs)
+  const remaining = new Set(getOwnKeys(rhs))
 
   for (const k of lkeys) {
-    if (remaining.has(k)) {
-      deepDiff(lhs[k], rhs[k], changes, prefilter, currentPath, k, stack, orderIndependent)
-      remaining.delete(k)
+    if (remaining.delete(k)) {
+      deepDiff(lhs[k], rhs[k], changes, prefilter, currentPath, k, stack, orderIndependent, true, true)
     } else {
-      deepDiff(lhs[k], undefined, changes, prefilter, currentPath, k, stack, orderIndependent)
+      deepDiff(lhs[k], undefined, changes, prefilter, currentPath, k, stack, orderIndependent, true, false)
     }
   }
 
   for (const k of remaining) {
-    deepDiff(undefined, rhs[k], changes, prefilter, currentPath, k, stack, orderIndependent)
+    deepDiff(undefined, rhs[k], changes, prefilter, currentPath, k, stack, orderIndependent, false, true)
   }
 }
 
@@ -258,33 +237,19 @@ function diffObjects(lhs, rhs, changes, prefilter, currentPath, stack, orderInde
  * Diff two Map instances structurally by keys and values.
  */
 function diffMaps(lhs, rhs, changes, prefilter, currentPath, stack, orderIndependent) {
-  const lkeys = Array.from(lhs.keys())
-  const rkeys = Array.from(rhs.keys())
-  const remaining = new Set(rkeys)
+  const remaining = new Set(rhs.keys())
 
-  for (const k of lkeys) {
-    if (remaining.has(k)) {
-      deepDiff(lhs.get(k), rhs.get(k), changes, prefilter, currentPath, k, stack, orderIndependent)
-      remaining.delete(k)
+  for (const k of lhs.keys()) {
+    if (remaining.delete(k)) {
+      deepDiff(lhs.get(k), rhs.get(k), changes, prefilter, currentPath, k, stack, orderIndependent, true, true)
     } else {
-      deepDiff(lhs.get(k), undefined, changes, prefilter, currentPath, k, stack, orderIndependent)
+      deepDiff(lhs.get(k), undefined, changes, prefilter, currentPath, k, stack, orderIndependent, true, false)
     }
   }
 
   for (const k of remaining) {
-    deepDiff(undefined, rhs.get(k), changes, prefilter, currentPath, k, stack, orderIndependent)
+    deepDiff(undefined, rhs.get(k), changes, prefilter, currentPath, k, stack, orderIndependent, false, true)
   }
-}
-
-/**
- * Compare two TypedArray instances element-by-element.
- */
-function typedArrayEqual(a, b) {
-  if (a.length !== b.length) return false
-  for (let i = 0; i < a.length; i++) {
-    if (a[i] !== b[i]) return false
-  }
-  return true
 }
 
 /**
@@ -297,13 +262,13 @@ function typedArrayEqual(a, b) {
  *   when there are no changes and no `accumulator` was provided. When an
  *   `accumulator` is provided, that same array is always returned.
  */
-export function diff(lhs, rhs, options = {}) {
-  const { prefilter, accumulator, orderIndependent } = options
+export function diff(lhs, rhs, options) {
+  const { prefilter, accumulator, orderIndependent } = options || {}
 
   const changes = accumulator || []
-  const stack = { pairs: new Map(), parents: [] }
+  const stack = { lhsPairs: new Map(), rhsPairs: new Map() }
 
-  deepDiff(lhs, rhs, changes, prefilter, [], undefined, stack, orderIndependent)
+  diffValues(lhs, rhs, changes, prefilter, [], stack, orderIndependent, lhs !== undefined, rhs !== undefined)
 
   if (accumulator) return accumulator
 
@@ -322,10 +287,10 @@ export function diff(lhs, rhs, options = {}) {
  * @returns {DiffChange[]} - The list of changes (always an array, possibly
  *   empty). Equal to `options.accumulator` when one was provided.
  */
-export function observableDiff(lhs, rhs, observer, options = {}) {
+export function observableDiff(lhs, rhs, observer, options) {
   const changes = diff(lhs, rhs, options) ?? []
 
-  if (observer) {
+  if (typeof observer === 'function') {
     for (const change of changes) observer(change)
   }
 
