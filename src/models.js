@@ -1,20 +1,4 @@
 /**
- * The set of valid diff kinds emitted and consumed by this library.
- * - `N` — a new property/element
- * - `E` — an edit to an existing property/element
- * - `A` — a change inside an array, with `index` and `item`
- * - `D` — a deleted property/element
- *
- * @type {Readonly<{ NEW: 'N', EDIT: 'E', ARRAY: 'A', DELETED: 'D' }>}
- */
-export const KIND = Object.freeze({
-  NEW: 'N',
-  EDIT: 'E',
-  ARRAY: 'A',
-  DELETED: 'D'
-})
-
-/**
  * @typedef {'N' | 'E' | 'A' | 'D'} DiffKind
  *
  * @typedef {object} DiffNewLike
@@ -43,17 +27,36 @@ export const KIND = Object.freeze({
  */
 
 /**
+ * The set of valid diff kinds emitted and consumed by this library.
+ * - `N` — a new property/element
+ * - `E` — an edit to an existing property/element
+ * - `A` — a change inside an array, with `index` and `item`
+ * - `D` — a deleted property/element
+ *
+ * @type {Readonly<{ NEW: 'N', EDIT: 'E', ARRAY: 'A', DELETED: 'D' }>}
+ */
+export const KIND = Object.freeze({
+  NEW: 'N',
+  EDIT: 'E',
+  ARRAY: 'A',
+  DELETED: 'D'
+})
+
+/**
  * Base class for all diff records.
  *
  * The `path` property, when present, is a frozen copy of the input array
  * — attempts to mutate it will throw in strict mode.
+ *
+ * @template {DiffKind} [K=DiffKind]
  */
 export class Diff {
   /**
-   * @param {DiffKind} kind - The kind of change (`'N'`, `'E'`, `'A'`, or `'D'`).
+   * @param {K} kind - The kind of change (`'N'`, `'E'`, `'A'`, or `'D'`).
    * @param {ReadonlyArray<PropertyKey>} [path] - Path segments leading to the changed value.
    */
   constructor(kind, path) {
+    /** @type {K} */
     this.kind = kind
 
     if (path?.length) {
@@ -64,7 +67,11 @@ export class Diff {
   }
 }
 
-/** A change inside an array at a specific index. */
+/**
+ * A change inside an array at a specific index.
+ *
+ * @augments {Diff<'A'>}
+ */
 export class DiffArray extends Diff {
   /**
    * @param {ReadonlyArray<PropertyKey> | undefined} path - Path to the array containing the change.
@@ -79,7 +86,11 @@ export class DiffArray extends Diff {
   }
 }
 
-/** A property/element that was deleted from `lhs`. */
+/**
+ * A property/element that was deleted from `lhs`.
+ *
+ * @augments {Diff<'D'>}
+ */
 export class DiffDeleted extends Diff {
   /**
    * @param {ReadonlyArray<PropertyKey> | undefined} path - Path to the deleted property.
@@ -92,7 +103,11 @@ export class DiffDeleted extends Diff {
   }
 }
 
-/** A change to an existing property/element. */
+/**
+ * A change to an existing property/element.
+ *
+ * @augments {Diff<'E'>}
+ */
 export class DiffEdit extends Diff {
   /**
    * @param {ReadonlyArray<PropertyKey> | undefined} path - Path to the edited property.
@@ -107,7 +122,11 @@ export class DiffEdit extends Diff {
   }
 }
 
-/** A new property/element added on `rhs`. */
+/**
+ * A new property/element added on `rhs`.
+ *
+ * @augments {Diff<'N'>}
+ */
 export class DiffNew extends Diff {
   /**
    * @param {ReadonlyArray<PropertyKey> | undefined} path - Path to the new property.
