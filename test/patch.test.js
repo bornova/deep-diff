@@ -4,34 +4,33 @@ import * as DeepDiff from '../src/index.js'
 
 describe('deep-diff — applyChange, applyDiff and revertChange', () => {
   describe('Changes should be applied correctly', () => {
-    const lhs = {
-      name: 'my object',
-      description: "it's an object!",
-      details: {
-        it: 'has',
-        an: 'array',
-        with: ['a', 'few', 'elements']
+    it('applies all changes except to the name property via observableDiff', () => {
+      const lhs = {
+        name: 'my object',
+        description: "it's an object!",
+        details: {
+          it: 'has',
+          an: 'array',
+          with: ['a', 'few', 'elements']
+        }
       }
-    }
 
-    const rhs = {
-      name: 'updated object',
-      description: "it's an object!",
-      details: {
-        it: 'has',
-        an: 'array',
-        with: ['a', 'few', 'more', 'elements', { than: 'before' }]
+      const rhs = {
+        name: 'updated object',
+        description: "it's an object!",
+        details: {
+          it: 'has',
+          an: 'array',
+          with: ['a', 'few', 'more', 'elements', { than: 'before' }]
+        }
       }
-    }
 
-    DeepDiff.observableDiff(lhs, rhs, (d) => {
-      // Apply all changes except to the name property...
-      if (d.path[d.path.length - 1] !== 'name') {
-        DeepDiff.applyChange(lhs, rhs, d)
-      }
-    })
+      DeepDiff.observableDiff(lhs, rhs, (d) => {
+        if (d.path[d.path.length - 1] !== 'name') {
+          DeepDiff.applyChange(lhs, rhs, d)
+        }
+      })
 
-    it('Should apply all changes except to the name property', () => {
       expect(lhs).to.eql({
         name: 'my object',
         description: "it's an object!",
@@ -42,6 +41,150 @@ describe('deep-diff — applyChange, applyDiff and revertChange', () => {
         }
       })
     })
+
+    it('materializes missing nested objects and arrays when applying individual changes to an empty object', () => {
+      const nestedOne = {
+        noChange: 'same',
+        levelOne: {
+          levelTwo: 'value'
+        },
+        arrayOne: [
+          {
+            objValue: 'value'
+          }
+        ]
+      }
+
+      const nestedTwo = {
+        noChange: 'same',
+        levelOne: {
+          levelTwo: 'another value'
+        },
+        arrayOne: [
+          {
+            objValue: 'new value'
+          },
+          {
+            objValue: 'more value'
+          }
+        ]
+      }
+
+      const diff = DeepDiff.diff(nestedOne, nestedTwo)
+
+      const resultLevelOne = {}
+      DeepDiff.applyChange(resultLevelOne, nestedTwo, diff[0])
+      expect(resultLevelOne.levelOne).to.eql({ levelTwo: 'another value' })
+
+      const resultAddedArrayObj = {}
+      DeepDiff.applyChange(resultAddedArrayObj, nestedTwo, diff[1])
+      expect(resultAddedArrayObj.arrayOne).to.be.an('array')
+      expect(resultAddedArrayObj.arrayOne[1]).to.eql({ objValue: 'more value' })
+
+      const resultEditedArrayObj = {}
+      DeepDiff.applyChange(resultEditedArrayObj, nestedTwo, diff[2])
+      expect(resultEditedArrayObj.arrayOne).to.be.an('array')
+      expect(resultEditedArrayObj.arrayOne[0]).to.eql({ objValue: 'new value' })
+    })
+
+    it('applies nested array differences correctly (regression test for bug #10)', () => {
+      const lhs = {
+        id: 'Release',
+        phases: [
+          {
+            id: 'Phase1',
+            tasks: [{ id: 'Task1' }, { id: 'Task2' }]
+          },
+          {
+            id: 'Phase2',
+            tasks: [{ id: 'Task3' }]
+          }
+        ]
+      }
+
+      const rhs = {
+        id: 'Release',
+        phases: [
+          {
+            id: 'Phase2',
+            tasks: [{ id: 'Task3' }]
+          },
+          {
+            id: 'Phase1',
+            tasks: [{ id: 'Task1' }, { id: 'Task2' }]
+          }
+        ]
+      }
+
+      const target = JSON.parse(JSON.stringify(lhs))
+      DeepDiff.applyDiff(target, rhs)
+      expect(target).to.eql(rhs)
+    })
+
+    it('applies diffs between two top-level arrays (regression test for bug #35)', () => {
+      const lhs = ['a', 'a', 'a']
+      const rhs = ['a']
+      const differences = DeepDiff.diff(lhs, rhs)
+
+      for (const change of differences) {
+        DeepDiff.applyChange(lhs, true, change)
+      }
+
+      expect(lhs).to.eql(['a'])
+    })
+
+    it('round-trips a composite structure via applyChange and revertChange', () => {
+      const sym = Symbol('tag')
+      const lhs = {
+        [sym]: 'v1',
+        keep: 42,
+        removed: 'gone',
+        undef: undefined,
+        nested: { a: [1, { x: 'old' }, 3] },
+        map: new Map([
+          ['k1', 'oldVal'],
+          ['k2', 'deleteMe']
+        ])
+      }
+      const rhs = {
+        [sym]: 'v2',
+        keep: 42,
+        added: 'new',
+        undef: 'definedNow',
+        nested: { a: [1, { x: 'new' }] },
+        map: new Map([
+          ['k1', 'newVal'],
+          ['k3', 'addedKey']
+        ])
+      }
+
+      const changes = DeepDiff.diff(lhs, rhs)
+      const target = {
+        [sym]: 'v1',
+        keep: 42,
+        removed: 'gone',
+        undef: undefined,
+        nested: { a: [1, { x: 'old' }, 3] },
+        map: new Map([
+          ['k1', 'oldVal'],
+          ['k2', 'deleteMe']
+        ])
+      }
+
+      for (const change of changes) {
+        DeepDiff.applyChange(target, change)
+      }
+      expect(target).to.eql(rhs)
+      expect(target[sym]).to.equal('v2')
+
+      for (let i = changes.length - 1; i >= 0; i--) {
+        DeepDiff.revertChange(target, changes[i])
+      }
+      expect(target).to.eql(lhs)
+      expect(target[sym]).to.equal('v1')
+      expect('undef' in target).to.equal(true)
+      expect('added' in target).to.equal(false)
+    })
   })
 
   describe('revertChange', () => {
@@ -50,7 +193,7 @@ describe('deep-diff — applyChange, applyDiff and revertChange', () => {
       expect(() => DeepDiff.revertChange({}, {}, diffs[0])).to.not.throw()
     })
 
-    it('reverts an array element change (A)', () => {
+    it('reverts an array element addition (A)', () => {
       const lhs = { arr: ['a', 'b'] }
       const rhs = { arr: ['a', 'b', 'c'] }
       const target = { arr: ['a', 'b', 'c'] }
@@ -96,12 +239,9 @@ describe('deep-diff — applyChange, applyDiff and revertChange', () => {
     })
 
     it('creates an array (not object) for intermediate path nodes when next key is numeric', () => {
-      // Bug 1 regression: revertChange was always creating {} for missing intermediate nodes,
-      // even when the next path segment is a numeric index (requiring an array).
       const lhs = { a: [{ b: 'old' }] }
       const rhs = { a: [{ b: 'new' }] }
       const diffs = DeepDiff.diff(lhs, rhs)
-      // diffs[0] has path ['a', 0, 'b']; revert onto an empty target
       const target = {}
       DeepDiff.revertChange(target, lhs, diffs[0])
       expect(target.a).to.be.an('array')
@@ -148,11 +288,14 @@ describe('deep-diff — applyChange, applyDiff and revertChange', () => {
     })
   })
 
-  describe('applyChange two-argument form', () => {
+  describe('applyChange and revertChange two-argument form', () => {
     it('accepts (target, change) with no source argument', () => {
       const target = { foo: 'bar' }
       DeepDiff.applyChange(target, { kind: 'E', path: ['foo'], lhs: 'bar', rhs: 'baz' })
       expect(target.foo).to.equal('baz')
+
+      DeepDiff.revertChange(target, { kind: 'E', path: ['foo'], lhs: 'bar', rhs: 'baz' })
+      expect(target.foo).to.equal('bar')
     })
   })
 
@@ -182,8 +325,8 @@ describe('deep-diff — applyChange, applyDiff and revertChange', () => {
     })
   })
 
-  describe('revertChange for array deletions', () => {
-    it('restores a deleted array element (revertArrayChange else-branch kind D)', () => {
+  describe('revertChange for array deletions and top-level arrays', () => {
+    it('restores a deleted array element', () => {
       const lhs = { arr: [1, 2, 3] }
       const rhs = { arr: [1, 2] }
       const target = { arr: [1, 2] }
@@ -192,9 +335,7 @@ describe('deep-diff — applyChange, applyDiff and revertChange', () => {
       expect(target.arr[2]).to.equal(3)
     })
 
-    it('reverts a top-level array addition using the target directly (no path on diff)', () => {
-      // diff on a top-level array produces a DiffArray with no path property, so
-      // revertChange must fall back to operating on the target itself.
+    it('reverts a top-level array addition when the diff has no path', () => {
       const lhs = [1, 2]
       const rhs = [1, 2, 3]
       const target = [1, 2, 3]
@@ -205,7 +346,7 @@ describe('deep-diff — applyChange, applyDiff and revertChange', () => {
     })
   })
 
-  describe('applyArrayChange with item that has a sub-path', () => {
+  describe('applyChange on nested array elements', () => {
     it('applies an edit to a nested property of an array element (kind E)', () => {
       const target = { arr: [{ x: 1 }] }
       const change = { kind: 'A', path: ['arr'], index: 0, item: { kind: 'E', path: ['x'], lhs: 1, rhs: 2 } }
@@ -227,7 +368,7 @@ describe('deep-diff — applyChange, applyDiff and revertChange', () => {
       expect(target.arr[0].y).to.equal(42)
     })
 
-    it('navigates a multi-segment path to edit a deeply nested property (kind E)', () => {
+    it('navigates a multi-segment sub-path to edit a deeply nested property (kind E)', () => {
       const target = { arr: [{ nested: { x: 1 } }] }
       const change = {
         kind: 'A',
@@ -239,7 +380,7 @@ describe('deep-diff — applyChange, applyDiff and revertChange', () => {
       expect(target.arr[0].nested.x).to.equal(2)
     })
 
-    it('applies a nested array change inside an array element (kind A via sub-path)', () => {
+    it('applies a nested array change inside an array element via sub-path (kind A)', () => {
       const target = { arr: [{ nested: [1, 2] }] }
       const change = {
         kind: 'A',
@@ -251,7 +392,7 @@ describe('deep-diff — applyChange, applyDiff and revertChange', () => {
       expect(target.arr[0].nested[2]).to.equal(3)
     })
 
-    it('applies a nested array change without sub-path (kind A, else-branch)', () => {
+    it('applies a directly nested array change without a sub-path (kind A)', () => {
       const target = { data: [[1, 2]] }
       const change = {
         kind: 'A',
@@ -263,7 +404,7 @@ describe('deep-diff — applyChange, applyDiff and revertChange', () => {
       expect(target.data[0][2]).to.equal(3)
     })
 
-    it('applies an edit to an array element without a sub-path (kind E, else-branch)', () => {
+    it('applies an edit directly to an array element without a sub-path (kind E)', () => {
       const target = { data: [1, 2, 3] }
       const change = { kind: 'A', path: ['data'], index: 2, item: { kind: 'E', lhs: 3, rhs: 99 } }
       DeepDiff.applyChange(target, {}, change)
@@ -271,7 +412,7 @@ describe('deep-diff — applyChange, applyDiff and revertChange', () => {
     })
   })
 
-  describe('revertArrayChange with item that has a sub-path', () => {
+  describe('revertChange on nested array elements', () => {
     it('reverts an edit to a nested property of an array element (kind E)', () => {
       const target = { arr: [{ x: 2 }] }
       const change = { kind: 'A', path: ['arr'], index: 0, item: { kind: 'E', path: ['x'], lhs: 1, rhs: 2 } }
@@ -293,7 +434,7 @@ describe('deep-diff — applyChange, applyDiff and revertChange', () => {
       expect(target.arr[0].x).to.equal(1)
     })
 
-    it('navigates a multi-segment path to revert a deeply nested property (kind E)', () => {
+    it('navigates a multi-segment sub-path to revert a deeply nested property (kind E)', () => {
       const target = { arr: [{ nested: { x: 2 } }] }
       const change = {
         kind: 'A',
@@ -305,7 +446,7 @@ describe('deep-diff — applyChange, applyDiff and revertChange', () => {
       expect(target.arr[0].nested.x).to.equal(1)
     })
 
-    it('reverts a nested array change inside an array element (kind A via sub-path)', () => {
+    it('reverts a nested array change inside an array element via sub-path (kind A)', () => {
       const target = { arr: [{ nested: [1, 2, 3] }] }
       const change = {
         kind: 'A',
@@ -317,7 +458,7 @@ describe('deep-diff — applyChange, applyDiff and revertChange', () => {
       expect(target.arr[0].nested).to.have.length(2)
     })
 
-    it('reverts a nested array change without sub-path (kind A, else-branch)', () => {
+    it('reverts a directly nested array change without a sub-path (kind A)', () => {
       const target = { data: [[1, 2, 3]] }
       const change = {
         kind: 'A',
@@ -399,6 +540,88 @@ describe('deep-diff — applyChange, applyDiff and revertChange', () => {
       DeepDiff.applyChange(target, maliciousChange)
       expect(Object.getPrototypeOf(target)).to.not.have.property('polluted')
     })
+
+    it('applyChange ignores a nested array change with __proto__ in item.path', () => {
+      const target = [{}]
+      const maliciousChange = {
+        kind: 'A',
+        index: 0,
+        item: {
+          kind: 'A',
+          path: ['__proto__'],
+          index: 'polluted',
+          item: {
+            kind: 'N',
+            rhs: 'yes'
+          }
+        }
+      }
+      DeepDiff.applyChange(target, maliciousChange)
+      expect(Object.prototype.polluted).to.equal(undefined)
+      expect({}.polluted).to.equal(undefined)
+    })
+  })
+
+  describe('missing container materialization and edge cases', () => {
+    it('materializes missing object and array elements in arrayChange', () => {
+      const targetObjSlot = { arr: [] }
+      DeepDiff.applyChange(targetObjSlot, {
+        kind: 'A',
+        path: ['arr'],
+        index: 0,
+        item: { kind: 'N', path: ['x'], rhs: 42 }
+      })
+      expect(targetObjSlot.arr[0]).to.eql({ x: 42 })
+
+      const targetNestedArrSlot = { arr: [] }
+      DeepDiff.applyChange(targetNestedArrSlot, {
+        kind: 'A',
+        path: ['arr'],
+        index: 0,
+        item: { kind: 'N', path: [0, 'x'], rhs: 7 }
+      })
+      expect(targetNestedArrSlot.arr[0]).to.be.an('array')
+      expect(targetNestedArrSlot.arr[0][0]).to.eql({ x: 7 })
+
+      const targetDirectArrSlot = { arr: [] }
+      DeepDiff.applyChange(targetDirectArrSlot, {
+        kind: 'A',
+        path: ['arr'],
+        index: 0,
+        item: { kind: 'A', index: 0, item: { kind: 'N', rhs: 99 } }
+      })
+      expect(targetDirectArrSlot.arr[0]).to.eql([99])
+
+      const targetPrimitiveIntermediate = { a: 42 }
+      DeepDiff.applyChange(targetPrimitiveIntermediate, {
+        kind: 'N',
+        path: ['a', 'b'],
+        rhs: 'replaced'
+      })
+      expect(targetPrimitiveIntermediate.a).to.eql({ b: 'replaced' })
+    })
+
+    it('handles empty array path: [] identically to undefined path and ignores unknown change kinds', () => {
+      const target = [1, 2]
+      DeepDiff.applyChange(target, {
+        kind: 'A',
+        path: [],
+        index: 2,
+        item: { kind: 'N', rhs: 3 }
+      })
+      expect(target).to.eql([1, 2, 3])
+
+      const obj = { a: 1 }
+      DeepDiff.applyChange(obj, { kind: 'UNKNOWN', path: ['a'], rhs: 2 })
+      expect(obj.a).to.equal(1)
+
+      DeepDiff.applyChange(target, {
+        kind: 'A',
+        index: 0,
+        item: { kind: 'UNKNOWN', rhs: 99 }
+      })
+      expect(target[0]).to.equal(1)
+    })
   })
 
   describe('guard / no-op conditions', () => {
@@ -463,7 +686,6 @@ describe('deep-diff — applyChange, applyDiff and revertChange', () => {
       const changes = DeepDiff.diff(source, target)
 
       expect(changes).to.be.an('array')
-      // Apply reversion on changes
       for (const change of changes) {
         DeepDiff.revertChange(target, source, change)
       }
@@ -480,17 +702,7 @@ describe('deep-diff — applyChange, applyDiff and revertChange', () => {
       expect(target.nested.get('x')).to.eql([1, 2, 3])
     })
 
-    it('materializes Map intermediate containers in walkPath', () => {
-      const target = new Map()
-      const source = new Map([['a', { b: { c: 1 } }]])
-      const diff = DeepDiff.diff(target, source)
-
-      DeepDiff.applyChange(target, source, diff[0])
-      expect(target.get('a')).to.be.an('object')
-      expect(target.get('a').b.c).to.equal(1)
-    })
-
-    it('materializes Map intermediate containers deep in walkPath', () => {
+    it('materializes missing intermediate containers on a Map in walkPath', () => {
       const target = new Map([['a', new Map()]])
       const source = new Map([['a', new Map([['b', { c: 1 }]])]])
       const diff = DeepDiff.diff(target, source)
@@ -501,7 +713,7 @@ describe('deep-diff — applyChange, applyDiff and revertChange', () => {
       expect(emptyTarget.get('a').b.c).to.equal(1)
     })
 
-    it('materializes Map nested array slots in objectChange', () => {
+    it('materializes missing nested array slots on a Map', () => {
       const target = new Map([['a', []]])
       const source = new Map([['a', [1]]])
       const diff = DeepDiff.diff(target, source)
