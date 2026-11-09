@@ -1,6 +1,6 @@
 import { observableDiff } from './diff.js'
 import { KIND } from './models.js'
-import { arrayRemove } from './utils.js'
+import { arrayRemove, realTypeOf } from './utils.js'
 
 /**
  * Per-direction policy mapping each diff `kind` to either:
@@ -27,6 +27,38 @@ function isSafeKey(key) {
 }
 
 /**
+ * Cross-realm safe check for Map instances.
+ *
+ * @param {*} value
+ * @returns {boolean}
+ */
+function isMap(value) {
+  return realTypeOf(value) === 'map'
+}
+
+/**
+ * Reads `key` from `container`, materializing and storing an empty array or
+ * plain object when the current value is not a non-null object.
+ *
+ * @param {object | Array | Map<*, *>} container
+ * @param {PropertyKey} key
+ * @param {boolean} isArray
+ * @returns {object | Array}
+ */
+function ensureSlot(container, key, isArray) {
+  const map = isMap(container)
+  let val = map ? container.get(key) : container[key]
+
+  if (val === null || typeof val !== 'object') {
+    val = isArray ? [] : {}
+    if (map) container.set(key, val)
+    else container[key] = val
+  }
+
+  return val
+}
+
+/**
  * Walk a path on `target`, materializing missing intermediate containers
  * (arrays when the next segment is numeric, objects otherwise). Returns the
  * parent that owns the final segment.
@@ -44,18 +76,7 @@ function walkPath(start, path) {
 
     if (!isSafeKey(key)) return Object.create(null)
 
-    const nextVal = it instanceof Map ? it.get(key) : it[key]
-
-    if (nextVal === undefined || nextVal === null) {
-      const container = typeof path[i + 1] === 'number' ? [] : {}
-      if (it instanceof Map) {
-        it.set(key, container)
-      } else {
-        it[key] = container
-      }
-    }
-
-    it = it instanceof Map ? it.get(key) : it[key]
+    it = ensureSlot(it, key, typeof path[i + 1] === 'number')
   }
 
   return it
@@ -70,11 +91,10 @@ function walkPath(start, path) {
  * @param {Readonly<Record<string, 'rhs' | 'lhs' | 'delete'>>} policy - The apply/revert policy map.
  */
 function writeSlot(parent, key, change, policy) {
-  if (!isSafeKey(key)) return
-
   const op = policy[change.kind]
+  if (!op || !isSafeKey(key)) return
 
-  if (parent instanceof Map) {
+  if (isMap(parent)) {
     if (op === 'delete') parent.delete(key)
     else parent.set(key, change[op])
   } else {
@@ -95,30 +115,18 @@ function writeSlot(parent, key, change, policy) {
 function arrayChange(arr, index, change, policy) {
   if (!isSafeKey(index)) return arr
 
-  const currentVal = arr instanceof Map ? arr.get(index) : arr[index]
-
   if (change.path?.length) {
-    const it = walkPath(currentVal, change.path)
-    const key = change.path[change.path.length - 1]
-
-    const targetVal = it instanceof Map ? it.get(key) : it[key]
-
-    if (change.kind === KIND.ARRAY) arrayChange(targetVal, change.index, change.item, policy)
-    else writeSlot(it, key, change, policy)
+    objectChange(ensureSlot(arr, index, typeof change.path[0] === 'number'), change, policy)
   } else if (change.kind === KIND.ARRAY) {
-    arrayChange(currentVal, change.index, change.item, policy)
-  } else if (policy[change.kind] === 'delete') {
-    if (arr instanceof Map) {
-      arr.delete(index)
-    } else {
-      arr = arrayRemove(arr, index)
-    }
+    arrayChange(ensureSlot(arr, index, true), change.index, change.item, policy)
   } else {
-    const newVal = change[policy[change.kind]]
-    if (arr instanceof Map) {
-      arr.set(index, newVal)
+    const op = policy[change.kind]
+    if (!op) return arr
+
+    if (op === 'delete') {
+      arr = arrayRemove(arr, index)
     } else {
-      arr[index] = newVal
+      arr[index] = change[op]
     }
   }
 
@@ -134,33 +142,22 @@ function arrayChange(arr, index, change, policy) {
  */
 function objectChange(target, change, policy) {
   const path = change.path
-  const it = path ? walkPath(target, path) : target
 
-  if (path) {
+  if (path?.length) {
+    const it = walkPath(target, path)
     const key = path[path.length - 1]
 
     if (!isSafeKey(key)) return
 
     if (change.kind === KIND.ARRAY) {
-      const currentVal = it instanceof Map ? it.get(key) : it[key]
-      // Materialize the array slot if it doesn't yet exist.
-      if (typeof currentVal === 'undefined') {
-        if (it instanceof Map) {
-          it.set(key, [])
-        } else {
-          it[key] = []
-        }
-      }
-
-      const nextVal = it instanceof Map ? it.get(key) : it[key]
-      arrayChange(nextVal, change.index, change.item, policy)
+      arrayChange(ensureSlot(it, key, true), change.index, change.item, policy)
     } else {
       writeSlot(it, key, change, policy)
     }
   } else if (change.kind === KIND.ARRAY) {
     // No path: only an `A` change can mutate the target itself.
     // Top-level `E`/`N`/`D` cannot mutate the caller's binding.
-    arrayChange(it, change.index, change.item, policy)
+    arrayChange(target, change.index, change.item, policy)
   }
 }
 
@@ -171,8 +168,8 @@ function objectChange(target, change, policy) {
  * convenience — if `change` is omitted and `source` looks like a change
  * record (has a string `kind`), it is treated as the change.
  *
- * @param {object | Array} target - Mutated in place.
- * @param {object | import('./models.js').DiffChange} [source] - In the
+ * @param {object | Array | Map<*, *>} target - Mutated in place.
+ * @param {import('./models.js').DiffChange | *} [source] - In the
  *   two-argument form, treated as the change record. Otherwise unused;
  *   provided to mirror the original deep-diff signature.
  * @param {import('./models.js').DiffChange} [change] - The change to apply. Required in the three-argument form.
@@ -192,9 +189,9 @@ export function applyChange(target, source, change) {
  * Computes the differences between `target` and `source`, then mutates
  * `target` so it becomes structurally equal to `source`.
  *
- * @param {object} target - Mutated in place.
- * @param {object} source - The shape `target` should match after this call.
- * @param {(target: object, source: object, change: import('./models.js').DiffChange) => boolean} [filter]
+ * @param {object | Array | Map<*, *>} target - Mutated in place.
+ * @param {object | Array | Map<*, *>} source - The shape `target` should match after this call.
+ * @param {(target: any, source: any, change: import('./models.js').DiffChange) => boolean} [filter]
  */
 export function applyDiff(target, source, filter) {
   if (!target || !source) return
@@ -207,16 +204,22 @@ export function applyDiff(target, source, filter) {
 /**
  * Reverts a single change against `target` (the inverse of `applyChange`).
  *
- * Note: unlike {@link applyChange}, `source` is required to be truthy — if
- * either `target` or `source` is falsy, the call is a no-op. This matches
- * the original deep-diff behavior.
+ * Two-argument form: `revertChange(target, change)` is also accepted for
+ * convenience — if `change` is omitted and `source` looks like a change
+ * record (has a string `kind`), it is treated as the change.
  *
- * @param {object | Array} target - Mutated in place.
- * @param {object | Array} source - Required as a truthy gate; otherwise
- *   unused.
- * @param {import('./models.js').DiffChange} change - The change to revert.
+ * @param {object | Array | Map<*, *>} target - Mutated in place.
+ * @param {import('./models.js').DiffChange | *} [source] - In
+ *   the two-argument form, treated as the change record. In the three-argument
+ *   form, required as a truthy gate; otherwise unused.
+ * @param {import('./models.js').DiffChange} [change] - The change to revert.
  */
 export function revertChange(target, source, change) {
+  // Two-argument form: revertChange(target, change)
+  if (change === undefined && source && typeof source.kind === 'string') {
+    change = source
+  }
+
   if (!target || !source || !change?.kind) return
 
   objectChange(target, change, REVERT)
